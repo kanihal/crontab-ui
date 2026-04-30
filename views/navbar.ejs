@@ -36,7 +36,9 @@
             <li><a class="dropdown-item" href="#" onclick="setTheme('system'); return false;"><i class="bi bi-circle-half me-2"></i>System</a></li>
           </ul>
         </li>
-        <li class="nav-item"><a class="nav-link" href="https://github.com/alseambusher/crontab-ui" target="_blank" rel="noopener" aria-label="GitHub repository" title="View on GitHub"><i class="bi bi-github" style="font-size:1.25rem;"></i></a></li>
+        <% if (typeof authEnabled !== 'undefined' && authEnabled) { %>
+          <li class="nav-item"><a class="nav-link" href="#" onclick="logout(); return false;" title="Sign out"><i class="bi bi-box-arrow-right me-1" style="font-size:1.05rem;vertical-align:-2px;"></i>Logout</a></li>
+        <% } %>
       </ul>
     </div>
   </div>

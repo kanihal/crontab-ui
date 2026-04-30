@@ -9,6 +9,7 @@ const mime = require('mime-types');
 const dayjs = require('dayjs');
 const relativeTime = require('dayjs/plugin/relativeTime');
 const busboy = require('connect-busboy');
+const cookieParser = require('cookie-parser');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 
@@ -16,7 +17,8 @@ const crontab = require('./crontab');
 const restore = require('./restore');
 const packageJson = require('./package.json');
 const { base_url: baseUrl, routes, relative: routesRelative } = require('./routes');
-const setupAuth = require('./middleware/auth');
+const { getAuthMode, applyProtection } = require('./middleware/auth');
+const { loginHandler, logoutHandler, loginPageHandler } = require('./middleware/jwt');
 const errorHandler = require('./middleware/error');
 const { validateDbParam, validateIdParam } = require('./middleware/validate');
 
@@ -43,9 +45,6 @@ app.use(rateLimit({
   legacyHeaders: false,
 }));
 
-// basic auth
-setupAuth(app);
-
 // ssl credentials
 const credentials = {
   key: process.env.SSL_KEY ? fs.readFileSync(process.env.SSL_KEY) : '',
@@ -62,6 +61,7 @@ const startHttpsServer = credentials.key && credentials.cert;
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 
+app.use(cookieParser());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(busboy());
@@ -73,6 +73,18 @@ app.use(baseUrl, express.static(path.join(__dirname, 'config')));
 
 app.set('host', process.env.HOST || '127.0.0.1');
 app.set('port', process.env.PORT || 8000);
+
+// auth: resolve mode, register public login routes (jwt mode), then gate everything below
+const authMode = getAuthMode();
+app.locals.authEnabled = authMode === 'jwt';
+
+if (authMode === 'jwt') {
+  app.get(routes.login, loginPageHandler);
+  app.post(routes.login, loginHandler);
+  app.post(routes.logout, logoutHandler);
+}
+
+applyProtection(app);
 
 // --- Routes ---
 

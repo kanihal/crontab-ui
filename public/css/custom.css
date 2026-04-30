@@ -281,6 +281,24 @@ div.dataTables_wrapper div.dataTables_filter label {
   word-break: break-word;
 }
 
+/* Stopped jobs: dim the row instead of using Bootstrap's table-primary tint
+   (which is light blue and unreadable in dark mode). */
+#main_table tbody tr.table-primary,
+#main_table tbody tr.table-primary > * {
+  --bs-table-bg: transparent;
+  --bs-table-color: inherit;
+  --bs-table-bg-state: transparent;
+  --bs-table-color-state: inherit;
+  background-color: transparent !important;
+  color: var(--app-text-muted) !important;
+  opacity: 0.65;
+}
+
+#main_table tbody tr.table-primary:hover > * {
+  background-color: var(--app-table-hover) !important;
+  opacity: 0.85;
+}
+
 .nowrap-actions {
   white-space: nowrap;
 }

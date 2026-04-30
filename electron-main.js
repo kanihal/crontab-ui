@@ -39,6 +39,7 @@ function startServer(port) {
       HOST: '127.0.0.1',
       CRON_DB_PATH: dataDir,
       NODE_ENV: 'production',
+      CRONTAB_UI_DISABLE_AUTH: 'true',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });

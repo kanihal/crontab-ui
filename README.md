@@ -72,10 +72,30 @@ By default, db, backups and logs are stored in the installation directory. It is
 
     CRON_DB_PATH=/path/to/folder crontab-ui
     
-If you need to apply basic HTTP authentication, you can set user name and password through environment variables:
+### Authentication
 
-    BASIC_AUTH_USER=user BASIC_AUTH_PWD=SecretPassword
-    
+Three modes are supported, resolved in this order:
+
+1. **Disabled** — set `CRONTAB_UI_DISABLE_AUTH=true`. No auth is applied regardless of other vars. The bundled Electron desktop app sets this automatically and always runs without a login wall.
+2. **JWT login** — set `ENABLE_AUTH=true`. The UI renders a login screen at `/login`; on success, a JWT is issued in an httpOnly, SameSite=strict cookie. Required env vars:
+   - `BASIC_AUTH_USER`, `BASIC_AUTH_PWD` — login credentials (reused from basic-auth mode).
+   - `JWT_SECRET` — token signing secret. Generate with `openssl rand -hex 32`.
+   - `JWT_EXPIRES_IN` (optional) — token lifetime. Default `7d`. Accepts any value supported by [jsonwebtoken](https://github.com/auth0/node-jsonwebtoken#usage) (e.g. `24h`, `30m`).
+
+   Example:
+   ```
+   ENABLE_AUTH=true \
+   BASIC_AUTH_USER=admin BASIC_AUTH_PWD=secret \
+   JWT_SECRET=$(openssl rand -hex 32) \
+   crontab-ui
+   ```
+
+3. **Basic HTTP auth** (legacy) — set `BASIC_AUTH_USER` and `BASIC_AUTH_PWD` (without `ENABLE_AUTH`). The browser shows a native auth dialog:
+
+       BASIC_AUTH_USER=user BASIC_AUTH_PWD=SecretPassword
+
+If none of the above env vars are set, the server runs without auth (existing behavior).
+
 Also, you may have to **set permissions** for your `node_modules` folder. Refer [this](https://docs.npmjs.com/getting-started/fixing-npm-permissions).
 
 If you need to use SSL, you can pass the private key and certificate through environment variables:
@@ -95,7 +115,9 @@ If you need to autosave your changes to crontab directly:
 - CRON_DB_PATH
 - CRON_PATH
 - BASIC_AUTH_USER, BASIC_AUTH_PWD
-- SSL_CERT, SSL_KEY 
+- ENABLE_AUTH, JWT_SECRET, JWT_EXPIRES_IN
+- CRONTAB_UI_DISABLE_AUTH
+- SSL_CERT, SSL_KEY
 - ENABLE_AUTOSAVE
 
 

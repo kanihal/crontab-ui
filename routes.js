@@ -22,6 +22,8 @@ const routes = {
   logger: '/logger',
   stdout: '/stdout',
   preview_crontab: '/preview_crontab',
+  login: '/login',
+  logout: '/logout',
 };
 
 exports.base_url = baseUrl;

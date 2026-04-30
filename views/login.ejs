@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in &middot; Crontab UI</title>
+<script>
+(function() {
+  try {
+    var stored = localStorage.getItem('cui-theme');
+    var resolved = (stored === 'light' || stored === 'dark')
+      ? stored
+      : (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    document.documentElement.setAttribute('data-bs-theme', resolved);
+  } catch (_e) {}
+})();
+</script>
+<link href="<%= baseUrl %>/css/bootstrap.min.css" rel="stylesheet">
+<link href="<%= baseUrl %>/css/bootstrap-icons.min.css" rel="stylesheet">
+<link href="<%= baseUrl %>/css/custom.css" rel="stylesheet">
+<style>
+  body { display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+  .login-card {
+    background: var(--app-card-bg);
+    border: 1px solid var(--app-card-border);
+    border-radius: 8px;
+    padding: 2rem;
+    width: 100%;
+    max-width: 360px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.06);
+  }
+  .login-card h1 { font-size: 1.25rem; font-weight: 600; margin: 0 0 1.25rem; text-align: center; }
+  .login-card .form-label { font-size: 0.8rem; }
+  .login-error { display: none; margin-top: 0.75rem; font-size: 0.85rem; }
+  .login-error.is-shown { display: block; }
+  .login-spinner {
+    display: inline-block;
+    width: 0.85rem;
+    height: 0.85rem;
+    border: 2px solid rgba(255,255,255,0.4);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: login-spin 0.6s linear infinite;
+    vertical-align: -2px;
+    margin-right: 0.4rem;
+  }
+  @keyframes login-spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="login-card">
+  <h1><i class="bi bi-shield-lock"></i> Crontab UI</h1>
+  <form id="login-form" autocomplete="on">
+    <div class="mb-3">
+      <label for="login-user" class="form-label">Username</label>
+      <input type="text" class="form-control" id="login-user" name="user" autocomplete="username" autofocus required>
+    </div>
+    <div class="mb-2">
+      <label for="login-pwd" class="form-label">Password</label>
+      <input type="password" class="form-control" id="login-pwd" name="pwd" autocomplete="current-password" required>
+    </div>
+    <div class="alert alert-danger login-error" id="login-error" role="alert"></div>
+    <button type="submit" class="btn btn-primary w-100 mt-3" id="login-submit">Sign in</button>
+  </form>
+</div>
+<script>
+(function() {
+  var routes = JSON.parse('<%- routes %>');
+  var form = document.getElementById('login-form');
+  var errorEl = document.getElementById('login-error');
+  var submitBtn = document.getElementById('login-submit');
+
+  var defaultLabel = submitBtn.textContent;
+
+  function showError(msg) {
+    errorEl.textContent = msg;
+    errorEl.classList.add('is-shown');
+  }
+  function setBusy(busy) {
+    submitBtn.disabled = busy;
+    submitBtn.innerHTML = busy
+      ? '<span class="login-spinner"></span>Signing in&hellip;'
+      : defaultLabel;
+  }
+
+  form.addEventListener('submit', function(e) {
+    e.preventDefault();
+    errorEl.classList.remove('is-shown');
+    setBusy(true);
+    var body = JSON.stringify({
+      user: document.getElementById('login-user').value,
+      pwd: document.getElementById('login-pwd').value,
+    });
+    fetch(routes.login, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: body,
+    }).then(function(res) {
+      if (res.ok) {
+        window.location.replace(routes.root || '/');
+        return;
+      }
+      setBusy(false);
+      if (res.status === 429) {
+        showError('Too many attempts. Try again in a few minutes.');
+      } else {
+        showError('Invalid username or password.');
+      }
+    }).catch(function() {
+      setBusy(false);
+      showError('Network error. Please try again.');
+    });
+  });
+})();
+</script>
+</body>
+</html>

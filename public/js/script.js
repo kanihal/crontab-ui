@@ -1,5 +1,27 @@
 'use strict';
 
+/*********** Auth ****************/
+
+function authLoginPath() {
+  return (typeof routes === 'object' && routes && routes.login) || 'login';
+}
+
+function authLogoutPath() {
+  return (typeof routes === 'object' && routes && routes.logout) || 'logout';
+}
+
+$.ajaxSetup({
+  statusCode: {
+    401: function () { window.location.href = authLoginPath(); },
+  },
+});
+
+function logout() {
+  fetch(authLogoutPath(), { method: 'POST', credentials: 'same-origin' })
+    .catch(function () {})
+    .then(function () { window.location.href = authLoginPath(); });
+}
+
 /*********** Theme ****************/
 
 function applyTheme(mode) {
