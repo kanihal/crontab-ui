@@ -62,14 +62,16 @@
 				</thead>
 				<tbody>
 					<% details.forEach(function(b, i){ %>
-						<tr>
+						<% var href = JSON.parse(routes).restore + '?db=' + encodeURIComponent(b.file) + '&from=backups'; %>
+						<tr class="backup-row" onclick="window.location='<%= href %>'" style="cursor:pointer;">
 							<td class="col-num"><%= i + 1 %></td>
-							<td><%= b.name %></td>
+							<td>
+								<a href="<%= href %>" class="text-reset text-decoration-none" onclick="event.stopPropagation();"><%= b.name %></a>
+							</td>
 							<td class="col-modified" title="<%= new Date(b.mtime).toString() %>">
 								<%= b.mtime ? dayjs(new Date(b.mtime)).fromNow() : '—' %>
 							</td>
-							<td class="nowrap-actions">
-								<a class="btn btn-sm btn-outline-info action-btn" data-bs-toggle="tooltip" data-bs-placement="top" title="View" href="<%= JSON.parse(routes).restore %>?db=<%= b.file %>"><i class="bi bi-eye"></i></a>
+							<td class="nowrap-actions" onclick="event.stopPropagation();">
 								<a class="btn btn-sm btn-outline-success action-btn" data-bs-toggle="tooltip" data-bs-placement="top" title="Restore" onclick="restore_backup('<%= b.file %>')"><i class="bi bi-arrow-counterclockwise"></i></a>
 								<a class="btn btn-sm btn-outline-danger action-btn" data-bs-toggle="tooltip" data-bs-placement="top" title="Delete" onclick="delete_backup('<%= b.file %>')"><i class="bi bi-trash"></i></a>
 							</td>

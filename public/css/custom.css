@@ -119,8 +119,11 @@ body > .app-container {
 }
 
 /* Bootstrap's .table-primary hardcodes light colors; rebind for dark theme so
-   stopped-job rows (which use .table-primary) read correctly. */
-[data-bs-theme="dark"] #main_table tbody tr.table-primary {
+   stopped-job rows (which use .table-primary) read correctly. Applies to any
+   table — main cronjobs list, backup-restore view, etc. */
+[data-bs-theme="dark"] tr.table-primary,
+[data-bs-theme="dark"] tr.table-primary > td,
+[data-bs-theme="dark"] tr.table-primary > th {
   --bs-table-color: var(--app-text);
   --bs-table-bg: #1a2335;
   --bs-table-border-color: #243454;

@@ -168,11 +168,15 @@ app.get(routes.backup, (req, res, next) => {
 
 app.get(routes.restore, validateDbParam, (req, res) => {
   restore.crontabs(req.query.db, (docs) => {
+    const back = req.query.from === 'backups'
+      ? (routesRelative.backups || '/')
+      : (routesRelative.root || '/');
     res.render('restore', {
       routes: JSON.stringify(routesRelative),
       crontabs: JSON.stringify(docs),
       backups: crontab.get_backup_names(),
       db: req.query.db,
+      back,
     });
   });
 });
