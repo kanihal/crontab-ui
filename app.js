@@ -182,6 +182,22 @@ app.get(routes.delete_backup, validateDbParam, (req, res) => {
   res.end();
 });
 
+app.get(routes.backups, (_req, res) => {
+  res.render('backups', {
+    routes: JSON.stringify(routesRelative),
+    backups: crontab.get_backup_names(),
+    details: crontab.get_backup_details(),
+    dayjs,
+  });
+});
+
+app.get(routes.delete_all_backups, (_req, res, next) => {
+  restore.deleteAll((err) => {
+    if (err) return next(err);
+    res.end();
+  });
+});
+
 app.get(routes.restore_backup, validateDbParam, (req, res) => {
   crontab.restore(req.query.db);
   res.end();

@@ -271,6 +271,20 @@ exports.get_backup_names = () => {
   return backups;
 };
 
+exports.get_backup_details = () => {
+  return exports.get_backup_names().map((file) => {
+    let mtime = 0;
+    try {
+      mtime = fs.statSync(path.join(dbFolder, file)).mtime.valueOf();
+    } catch (_e) { /* missing/unreadable — surface as 0 */ }
+    return {
+      file,
+      name: file.replace(/^backup /, '').replace(/\.db$/, ''),
+      mtime,
+    };
+  });
+};
+
 function sanitizeBackupName(raw) {
   if (!raw) return '';
   return String(raw).replace(/[^A-Za-z0-9 _.-]/g, '').trim().slice(0, 64);

@@ -22,3 +22,17 @@ exports.delete = (dbName) => {
     }
   });
 };
+
+exports.deleteAll = (callback) => {
+  const files = fs.readdirSync(crontab.db_folder)
+    .filter((f) => f.indexOf('backup') === 0);
+  let remaining = files.length;
+  if (remaining === 0) return callback && callback();
+  for (const f of files) {
+    fs.unlink(path.join(crontab.db_folder, f), (err) => {
+      if (err) console.log(`Delete error: ${err}`);
+      remaining -= 1;
+      if (remaining === 0 && callback) callback();
+    });
+  }
+};

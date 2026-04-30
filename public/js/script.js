@@ -356,9 +356,20 @@ function doBackup() {
 function delete_backup(db_name) {
   messageBox('<p> Do you want to delete this backup? </p>', 'Confirm delete', null, null, function() {
     $.get(routes.delete_backup, {db: db_name}, function() {
-      location = routes.root;
+      location = routes.backups || routes.root;
     });
   });
+}
+
+function delete_all_backups() {
+  messageBox(
+    '<p class="mb-0">Delete <strong>all</strong> saved backups? This cannot be undone.</p>',
+    'Confirm delete all', 'Delete all', null, function() {
+      $.get(routes.delete_all_backups, {}, function() {
+        location.reload();
+      });
+    }
+  );
 }
 
 function restore_backup(db_name) {

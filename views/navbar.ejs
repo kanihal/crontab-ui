@@ -16,9 +16,13 @@
             <% if (backups.length == 0){ %>
               <li><a class="dropdown-item" href="#">None</a></li>
             <% } else { %>
-              <% backups.forEach(function(file){ %>
+              <% backups.slice(0, 3).forEach(function(file){ %>
                 <li><a class="dropdown-item" href="<%= JSON.parse(routes).restore %>?db=<%= file %>"><%= file.replace(/^backup /, '').replace(/\.db$/, '') %></a></li>
               <% }) %>
+              <% if (backups.length > 3) { %>
+                <li><hr class="dropdown-divider"></li>
+              <% } %>
+              <li><a class="dropdown-item" href="<%= JSON.parse(routes).backups %>"><i class="bi bi-three-dots me-1"></i>More… (<%= backups.length %>)</a></li>
             <% } %>
           </ul>
         </li>

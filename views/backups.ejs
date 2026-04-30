@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Crontab UI — Backups</title>
+<script>
+(function() {
+  try {
+    var stored = localStorage.getItem('cui-theme');
+    var resolved = (stored === 'light' || stored === 'dark')
+      ? stored
+      : (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    document.documentElement.setAttribute('data-bs-theme', resolved);
+  } catch (_e) {}
+})();
+</script>
+<link href="css/bootstrap.min.css" rel="stylesheet">
+<link href="css/bootstrap-icons.min.css" rel="stylesheet">
+<link href="css/custom.css" rel="stylesheet">
+<script src="js/jquery.min.js"></script>
+<script src="js/bootstrap.bundle.min.js"></script>
+<script src="script.js"></script>
+<script type="text/javascript">
+	var routes = [];
+	document.addEventListener('DOMContentLoaded', function() {
+		var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+		tooltipTriggerList.map(function (el) { return new bootstrap.Tooltip(el); });
+		routes = JSON.parse('<%- routes %>');
+	});
+</script>
+</head>
+<body>
+<%- include('navbar.ejs') -%>
+<div class="app-container">
+	<div class="page-header">
+		<div class="d-flex align-items-center gap-2">
+			<a class="btn btn-sm btn-outline-secondary" href="<%= JSON.parse(routes).root || '/' %>" title="Back to cronjobs"><i class="bi bi-arrow-left"></i> Back</a>
+			<h2 class="mb-0">Backups</h2>
+		</div>
+		<% if (details.length > 0) { %>
+		<a class="btn btn-sm btn-outline-danger" onclick="delete_all_backups()"><i class="bi bi-trash3"></i> Delete all backups</a>
+		<% } %>
+	</div>
+
+	<% if (details.length === 0) { %>
+		<div class="app-card text-center text-muted py-5">
+			<i class="bi bi-archive" style="font-size:2rem;"></i>
+			<p class="mb-0 mt-2">No backups yet.</p>
+			<p class="small">Click <strong>Backup</strong> in the navbar to create one.</p>
+		</div>
+	<% } else { %>
+		<div class="app-card">
+			<table class="table table-striped" id="backups_table">
+				<thead>
+					<tr>
+						<th class="col-num">#</th>
+						<th>Name</th>
+						<th class="col-modified">Created</th>
+						<th class="col-actions">Actions</th>
+					</tr>
+				</thead>
+				<tbody>
+					<% details.forEach(function(b, i){ %>
+						<tr>
+							<td class="col-num"><%= i + 1 %></td>
+							<td><%= b.name %></td>
+							<td class="col-modified" title="<%= new Date(b.mtime).toString() %>">
+								<%= b.mtime ? dayjs(new Date(b.mtime)).fromNow() : '—' %>
+							</td>
+							<td class="nowrap-actions">
+								<a class="btn btn-sm btn-outline-info action-btn" data-bs-toggle="tooltip" data-bs-placement="top" title="View" href="<%= JSON.parse(routes).restore %>?db=<%= b.file %>"><i class="bi bi-eye"></i></a>
+								<a class="btn btn-sm btn-outline-success action-btn" data-bs-toggle="tooltip" data-bs-placement="top" title="Restore" onclick="restore_backup('<%= b.file %>')"><i class="bi bi-arrow-counterclockwise"></i></a>
+								<a class="btn btn-sm btn-outline-danger action-btn" data-bs-toggle="tooltip" data-bs-placement="top" title="Delete" onclick="delete_backup('<%= b.file %>')"><i class="bi bi-trash"></i></a>
+							</td>
+						</tr>
+					<% }); %>
+				</tbody>
+			</table>
+		</div>
+	<% } %>
+</div>
+<%- include('popup.ejs') -%>
+</body>
+</html>
