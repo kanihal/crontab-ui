@@ -5,7 +5,7 @@ Crontab UI
 
 **macOS users — native desktop app, no Node setup needed:**
 
-- Download from [Releases](https://github.com/kanihal/crontab-ui/releases/latest): `Crontab-UI-0.4.3-arm64.dmg` (Apple Silicon) or `Crontab-UI-0.4.3-x64.dmg` (Intel).
+- Download from [Releases](https://github.com/kanihal/crontab-ui/releases/latest): `Crontab-UI-0.4.4-arm64.dmg` (Apple Silicon) or `Crontab-UI-0.4.4-x64.dmg` (Intel).
 - Open the DMG and drag **Crontab UI** to `/Applications`.
 - Clear the unsigned-build quarantine flag once: `xattr -dr com.apple.quarantine "/Applications/Crontab UI.app"`.
 - Launch from Spotlight or Applications. The Express server runs in the background on a free local port and shuts down when you close the window.
