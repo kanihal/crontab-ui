@@ -22,6 +22,7 @@ const routes = {
   logger: '/logger',
   stdout: '/stdout',
   preview_crontab: '/preview_crontab',
+  globals: '/globals',  // PATCH: edit global env vars (SHELL/PATH/...)
   login: '/login',
   logout: '/logout',
 };

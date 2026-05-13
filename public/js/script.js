@@ -605,3 +605,28 @@ function copyCrontab() {
     }, 2000);
   });
 }
+
+// PATCH: edit global env vars (SHELL/PATH/...) prepended to every cron line.
+function editGlobals() {
+  $.get(routes.globals, function(data) {
+    document.getElementById('globals-content').value = data || '';
+    getModal('globals-modal').show();
+  });
+}
+
+function saveGlobals() {
+  var content = document.getElementById('globals-content').value;
+  $.post(routes.globals, { content: content }, function() {
+    getModal('globals-modal').hide();
+    if (typeof alertify !== 'undefined' && alertify.success) {
+      alertify.success('Saved. Crontab redeployed with new env vars.');
+    }
+  }).fail(function(xhr) {
+    var msg = 'Save failed: ' + (xhr.responseText || xhr.statusText);
+    if (typeof alertify !== 'undefined' && alertify.error) {
+      alertify.error(msg);
+    } else {
+      alert(msg);
+    }
+  });
+}
