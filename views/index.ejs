@@ -109,7 +109,7 @@
 					<a class="btn btn-sm btn-outline-primary action-btn" data-bs-toggle="tooltip" data-bs-placement="top" title="Edit" onclick="editJob('<%= crontab._id %>')"><i class="bi bi-pencil-square"></i></a>
 		<% if (crontab.logging && crontab.logging != "false") { %>
 					<a class="btn btn-sm btn-outline-danger action-btn" data-bs-toggle="tooltip" data-bs-placement="top" title="stderr log" href="<%= JSON.parse(routes).logger + '?id=' + crontab._id %>" target="_blank"><i class="bi bi-journal-x"></i></a>
-					<a class="btn btn-sm btn-outline-info action-btn" data-bs-toggle="tooltip" data-bs-placement="top" title="stdout log" href="<%= JSON.parse(routes).stdout + '?id=' + crontab._id %>" target="_blank"><i class="bi bi-journal-text"></i></a>
+					<a class="btn btn-sm btn-outline-primary action-btn" data-bs-toggle="tooltip" data-bs-placement="top" title="stdout log" href="<%= JSON.parse(routes).stdout + '?id=' + crontab._id %>" target="_blank"><i class="bi bi-journal-text"></i></a>
 		<% } %>
 					<a class="btn btn-sm btn-outline-secondary action-btn" data-bs-toggle="tooltip" data-bs-placement="top" title="Duplicate" onclick="duplicateJob('<%= crontab._id %>')"><i class="bi bi-copy"></i></a>
 					<a class="btn btn-sm btn-outline-danger action-btn" data-bs-toggle="tooltip" data-bs-placement="top" title="Delete" onclick="deleteJob('<%= crontab._id %>')"><i class="bi bi-trash"></i></a>
