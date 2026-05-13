@@ -15,6 +15,32 @@ console.log(`Cron db path: ${dbFolder}`);
 const logFolder = path.join(dbFolder, 'logs');
 const envFile = path.join(dbFolder, 'env.db');
 const crontabDbFile = path.join(dbFolder, 'crontab.db');
+// PATCH: prologue lines prepended to every deployed crontab. Used to set
+// SHELL=/bin/bash so cron lines run under bash (the default /bin/sh on
+// Ubuntu is dash, which has no `source` builtin). User-editable via the
+// "Edit global env vars" button in the UI -> POST /globals.
+const globalsFile = path.join(dbFolder, 'globals.txt');
+const defaultGlobals =
+  'SHELL=/bin/bash\nPATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n';
+function readGlobalsSync() {
+  try {
+    const content = fs.readFileSync(globalsFile, 'utf8');
+    return content.endsWith('\n') ? content : content + '\n';
+  } catch (e) {
+    return defaultGlobals;
+  }
+}
+exports.get_globals = () => {
+  try {
+    return fs.readFileSync(globalsFile, 'utf8');
+  } catch (e) {
+    return defaultGlobals;
+  }
+};
+exports.set_globals = (content, callback) => {
+  const safe = (content || '').replace(/\r\n/g, '\n');
+  fs.writeFile(globalsFile, safe, (err) => callback(err));
+};
 
 const db = new Datastore({ filename: crontabDbFile, autocompactionInterval: 60000 });
 
@@ -207,7 +233,8 @@ function runDeploy(callback) {
   // added directly via `crontab -e` between page loads.
   exports.import_crontab(() => {
     exports.crontabs((tabs) => {
-      let crontabString = '';
+      // PATCH: prepend user-editable global env vars (see readGlobalsSync above)
+      let crontabString = readGlobalsSync();
       for (const tab of tabs) {
         if (!tab.stopped) {
           const wrapped = addEnvVars(tab.envVars, makeCommand(tab));
@@ -374,7 +401,8 @@ exports.import_crontab = (callback) => {
 
 exports.preview_crontab = (callback) => {
   exports.crontabs((tabs) => {
-    let crontabString = '';
+    // PATCH: force bash for every cron line (POSIX /bin/sh has no `source`)
+      let crontabString = 'SHELL=/bin/bash\nPATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n';
     for (const tab of tabs) {
       if (!tab.stopped) {
         const wrapped = addEnvVars(tab.envVars, makeCommand(tab));

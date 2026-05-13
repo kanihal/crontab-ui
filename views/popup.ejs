@@ -123,3 +123,27 @@
     </div>
   </div>
 </div>
+
+<!-- PATCH: edit global env-var lines prepended to the deployed crontab. -->
+<div class="modal fade" id="globals-modal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-pencil-square"></i> Global Environment Variables</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-info mb-3">
+          <i class="bi bi-info-circle"></i>
+          Lines prepended to every deployed crontab. Use <code>KEY=value</code> format, one per line.
+          Setting <code>SHELL=/bin/bash</code> lets cron lines use bash builtins like <code>source</code>.
+        </div>
+        <textarea id="globals-content" class="form-control font-monospace" rows="8" spellcheck="false" style="white-space:pre;"></textarea>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" onclick="saveGlobals();"><i class="bi bi-save"></i> Save &amp; redeploy</button>
+      </div>
+    </div>
+  </div>
+</div>

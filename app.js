@@ -254,6 +254,22 @@ app.get(routes.preview_crontab, (req, res) => {
   });
 });
 
+// PATCH: globals editor -- read/write the file of env-var lines prepended
+// to the deployed crontab. Saving triggers a redeploy so changes apply
+// immediately to /var/spool/cron/crontabs/root.
+app.get(routes.globals, (req, res) => {
+  res.type('text/plain').send(crontab.get_globals());
+});
+app.post(routes.globals, (req, res, next) => {
+  crontab.set_globals(req.body.content || '', (err) => {
+    if (err) return next(err);
+    crontab.deploy((deployErr) => {
+      if (deployErr) return next(deployErr);
+      res.end();
+    });
+  });
+});
+
 function sendLog(filePath, req, res) {
   if (fs.existsSync(filePath)) {
     res.type('text/plain');
