@@ -10,6 +10,7 @@ const path = require('path');
 const appDir = path.join(__dirname, 'app');
 const dataDir = path.join(os.homedir(), 'Library', 'Application Support', 'crontab-ui', 'crontabs');
 const pidFile = path.join(dataDir, '.desktop-server.pid');
+const stateFile = path.join(dataDir, '.desktop-server.json');
 let serverProc = null;
 let shuttingDown = false;
 
@@ -40,9 +41,21 @@ function isAlive(pid) {
 }
 
 function readSavedPid() {
+  const savedState = readSavedState();
+  if (savedState && savedState.pid) return savedState.pid;
+
   try {
     const pid = Number(fs.readFileSync(pidFile, 'utf8'));
     return Number.isInteger(pid) && pid > 0 ? pid : null;
+  } catch (_e) {
+    return null;
+  }
+}
+
+function readSavedState() {
+  try {
+    const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+    return Number.isInteger(state.pid) && state.pid > 0 ? state : null;
   } catch (_e) {
     return null;
   }
@@ -73,6 +86,38 @@ async function findPortListeners(port) {
     .filter((pid) => Number.isInteger(pid) && pid > 0);
 }
 
+async function closeTerminalTab(tty) {
+  if (!tty) return;
+  const script = `
+on run argv
+  set targetTty to item 1 of argv
+  tell application "Terminal"
+    repeat with w in windows
+      repeat with t in tabs of w
+        try
+          if tty of t is targetTty then
+            repeat 100 times
+              if busy of t is false then
+                close t
+                return
+              end if
+              delay 0.1
+            end repeat
+            return
+          end if
+        end try
+      end repeat
+    end repeat
+  end tell
+end run
+`;
+  const proc = spawn('/usr/bin/osascript', ['-', tty], {
+    stdio: ['pipe', 'ignore', 'ignore'],
+  });
+  proc.stdin.end(script);
+  await new Promise((resolve) => proc.on('close', resolve));
+}
+
 async function stopPid(pid, label) {
   if (!isAlive(pid)) return;
   console.log(`Stopping existing Crontab UI ${label} process ${pid}`);
@@ -99,7 +144,8 @@ async function stopPid(pid, label) {
 
 async function restartExistingServer(port) {
   const pids = new Set();
-  const savedPid = readSavedPid();
+  const savedState = readSavedState();
+  const savedPid = savedState && savedState.pid ? savedState.pid : readSavedPid();
   if (savedPid) pids.add(savedPid);
 
   for (const pid of await findPortListeners(port)) {
@@ -116,10 +162,18 @@ async function restartExistingServer(port) {
       );
     }
     await stopPid(pid, pid === savedPid ? 'saved' : 'listening');
+    if (pid === savedPid && savedState && savedState.tty) {
+      await closeTerminalTab(savedState.tty);
+    }
   }
 
   try {
     fs.unlinkSync(pidFile);
+  } catch (_e) {
+    // Already removed.
+  }
+  try {
+    fs.unlinkSync(stateFile);
   } catch (_e) {
     // Already removed.
   }
@@ -203,10 +257,20 @@ async function main() {
     stdio: 'inherit',
   });
   fs.writeFileSync(pidFile, String(serverProc.pid));
+  fs.writeFileSync(stateFile, JSON.stringify({
+    pid: serverProc.pid,
+    tty: process.env.CRONTAB_UI_TERMINAL_TTY || '',
+    port,
+  }));
 
   serverProc.on('exit', (code, signal) => {
     try {
       fs.unlinkSync(pidFile);
+    } catch (_e) {
+      // Already removed.
+    }
+    try {
+      fs.unlinkSync(stateFile);
     } catch (_e) {
       // Already removed.
     }

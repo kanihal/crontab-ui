@@ -5,6 +5,7 @@ APP_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_PAYLOAD="$APP_ROOT/Resources/app"
 SERVER_LAUNCHER="$APP_ROOT/Resources/server-launcher.js"
 DATA_DIR="$HOME/Library/Application Support/crontab-ui/crontabs"
+export CRONTAB_UI_TERMINAL_TTY="$(tty 2>/dev/null || true)"
 
 find_node() {
   local candidate
@@ -28,6 +29,7 @@ NODE_BIN="$(find_node || true)"
 
 echo "Crontab UI"
 echo "=========="
+printf '\033]0;Crontab UI\007'
 
 if [[ -z "$NODE_BIN" ]]; then
   echo "Node.js was not found."
