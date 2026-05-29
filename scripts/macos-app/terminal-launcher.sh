@@ -47,6 +47,7 @@ mkdir -p "$DATA_DIR/logs"
 
 echo "Node: $("$NODE_BIN" -v) ($NODE_BIN)"
 echo "Data: $DATA_DIR"
+echo "Port: ${CRONTAB_UI_DESKTOP_PORT:-47832}"
 echo "Press Ctrl+C or close this Terminal window to stop Crontab UI."
 echo
 

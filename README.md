@@ -9,7 +9,7 @@ Crontab UI
 - Build the app with `npm run mac:app`.
 - Drag `dist/Crontab UI.app` to `/Applications`.
 - Clear the unsigned-build quarantine flag once: `xattr -dr com.apple.quarantine "/Applications/Crontab UI.app"`.
-- Launch from Spotlight or Applications. The app opens Terminal, starts the Express server on a free local port, and opens your default browser.
+- Launch from Spotlight or Applications. The app opens Terminal, starts the Express server on `http://127.0.0.1:47832/`, and opens your default browser. Reopening the app restarts the existing desktop server instead of creating another one. Set `CRONTAB_UI_DESKTOP_PORT` before launch to use a different fixed port.
 - Press `Ctrl+C` in Terminal or close the Terminal window to stop the server.
 - Cron data lives at `~/Library/Application Support/crontab-ui/crontabs/`.
 
