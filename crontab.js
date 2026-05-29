@@ -362,17 +362,27 @@ function escapeRegex(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function isManagedWrapperCommand(command) {
+  const currentPathRegex = new RegExp(
+    `${escapeRegex(cronPath)}/([A-Za-z0-9_-]+)\\.std(?:out|err)`
+  );
+  if (currentPathRegex.test(command)) return true;
+
+  return (
+    /\|\s*tee\s+\S+\.stdout\b/.test(command) &&
+    /\|\s*tee\s+\S+\.stderr\b/.test(command) &&
+    /3>&1\s+1>&2\s+2>&3/.test(command)
+  );
+}
+
 exports.import_crontab = (callback) => {
   if (process.env.CRONTAB_UI_SKIP_SYSTEM_IMPORT === 'true') {
     return process.nextTick(() => callback && callback());
   }
 
-  exec('crontab -l', (_error, stdout) => {
+  const handleCrontab = (stdout) => {
     const lines = (stdout || '').split('\n');
     const namePrefix = Date.now();
-    const wrapperIdRegex = new RegExp(
-      `${escapeRegex(cronPath)}/([A-Za-z0-9_-]+)\\.std(?:out|err)`
-    );
     const lineRegex = /^((@[a-zA-Z]+\s+)|(([^\s]+)\s+([^\s]+)\s+([^\s]+)\s+([^\s]+)\s+([^\s]+)\s+))/;
 
     const tasks = lines.map((rawLine, index) => new Promise((resolve) => {
@@ -389,8 +399,7 @@ exports.import_crontab = (callback) => {
 
       if (!command || !schedule || !isValid) return resolve();
 
-      const idMatch = command.match(wrapperIdRegex);
-      if (idMatch) {
+      if (isManagedWrapperCommand(command)) {
         // Wrapper line — either managed (skip) or orphan (skip; next deploy cleans).
         return resolve();
       }
@@ -403,7 +412,15 @@ exports.import_crontab = (callback) => {
     }));
 
     Promise.all(tasks).then(() => callback && callback());
-  });
+  };
+
+  if (process.env.CRONTAB_UI_SYSTEM_CRONTAB_FILE) {
+    return fs.readFile(process.env.CRONTAB_UI_SYSTEM_CRONTAB_FILE, 'utf8', (_err, stdout) => {
+      handleCrontab(stdout);
+    });
+  }
+
+  exec('crontab -l', (_error, stdout) => handleCrontab(stdout));
 };
 
 exports.preview_crontab = (callback) => {

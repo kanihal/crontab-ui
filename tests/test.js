@@ -272,6 +272,23 @@ describe('Crontab UI', () => {
         .filter((f) => f.startsWith('backup'));
       expect(backupsAfter.length).toBe(backupsBefore.length + 1);
     });
+
+    it('should not import managed logging wrappers from old temp paths', async () => {
+      const crontabFile = path.join(testDbPath, 'foreign-wrapper-crontab');
+      fs.writeFileSync(crontabFile, [
+        '* * * * * ((({ echo backup; } | tee /var/folders/example/crontab-ui-test-old/job.stdout) 3>&1 1>&2 2>&3 | tee /var/folders/example/crontab-ui-test-old/job.stderr) 3>&1 1>&2 2>&3)',
+        '',
+      ].join('\n'));
+
+      delete process.env.CRONTAB_UI_SKIP_SYSTEM_IMPORT;
+      process.env.CRONTAB_UI_SYSTEM_CRONTAB_FILE = crontabFile;
+      await request(app).get('/import_crontab');
+      process.env.CRONTAB_UI_SKIP_SYSTEM_IMPORT = 'true';
+      delete process.env.CRONTAB_UI_SYSTEM_CRONTAB_FILE;
+
+      const res = await request(app).get('/');
+      expect(res.text).not.toContain('crontab-ui-test-old');
+    });
   });
 
   describe('POST /import (auto-backup)', () => {
