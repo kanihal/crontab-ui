@@ -8,9 +8,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint .",
-    "electron": "electron electron-main.js",
     "icon": "bash scripts/generate-icon.sh",
-    "dist:mac": "npm run icon && electron-builder --mac"
+    "mac:app": "bash scripts/build-macos-app.sh"
   },
   "dependencies": {
     "@seald-io/nedb": "^4.1.2",
@@ -29,8 +28,6 @@
     "nodemailer": "^8.0.5"
   },
   "devDependencies": {
-    "electron": "^41.3.0",
-    "electron-builder": "^26.8.1",
     "eslint": "^9.0.0",
     "globals": "^16.0.0",
     "prettier": "^3.5.0",
@@ -53,63 +50,5 @@
     "node"
   ],
   "author": "Suresh Alse",
-  "license": "MIT",
-  "build": {
-    "appId": "com.crontabui.app",
-    "productName": "Crontab UI",
-    "asar": false,
-    "extraMetadata": {
-      "main": "electron-main.js"
-    },
-    "directories": {
-      "buildResources": "build",
-      "output": "dist"
-    },
-    "files": [
-      "electron-main.js",
-      "app.js",
-      "crontab.js",
-      "restore.js",
-      "routes.js",
-      "bin/**",
-      "config/**",
-      "middleware/**",
-      "public/**",
-      "views/**",
-      "package.json",
-      "node_modules/**",
-      "!crontabs/**",
-      "!tests/**",
-      "!screenshots/**",
-      "!.github/**",
-      "!Dockerfile",
-      "!docker-compose.yml",
-      "!supervisord.conf",
-      "!Makefile",
-      "!deploy.txt",
-      "!*.md"
-    ],
-    "mac": {
-      "category": "public.app-category.developer-tools",
-      "icon": "build/icon.icns",
-      "target": [
-        {
-          "target": "dmg",
-          "arch": [
-            "arm64",
-            "x64"
-          ]
-        },
-        {
-          "target": "zip",
-          "arch": [
-            "arm64",
-            "x64"
-          ]
-        }
-      ],
-      "hardenedRuntime": false,
-      "gatekeeperAssess": false
-    }
-  }
+  "license": "MIT"
 }

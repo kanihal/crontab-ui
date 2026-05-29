@@ -244,8 +244,11 @@ app.post(routes.import, (req, res, next) => {
   });
 });
 
-app.get(routes.import_crontab, (req, res) => {
-  crontab.import_crontab(() => res.end());
+app.get(routes.import_crontab, (_req, res, next) => {
+  crontab.backup((err) => {
+    if (err) return next(err);
+    crontab.import_crontab(() => res.end());
+  });
 });
 
 app.get(routes.preview_crontab, (req, res) => {

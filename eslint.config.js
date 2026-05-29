@@ -5,11 +5,14 @@ const globals = require('globals');
 module.exports = [
   {
     ignores: [
+      '.claude/**',
+      'dist/**',
       'node_modules/**',
       'public/js/jquery.min.js',
       'public/js/bootstrap.bundle.min.js',
       'public/js/dataTables.min.js',
       'public/js/dataTables.bootstrap5.min.js',
+      'public/js/cronstrue.min.js',
       'public/js/jquery.js',
       'public/js/bootstrap.min.js',
     ],
@@ -42,6 +45,8 @@ module.exports = [
         ...globals.jquery,
         bootstrap: 'readonly',
         config: 'readonly',
+        cronstrue: 'readonly',
+        alertify: 'readonly',
         routes: 'writable',
         crontabs: 'writable',
       },

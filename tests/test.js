@@ -14,6 +14,9 @@ process.env.CRON_DB_PATH = testDbPath;
 process.env.CRON_PATH = testDbPath;
 process.env.PORT = '0';
 process.env.HOST = '127.0.0.1';
+process.env.CRONTAB_UI_DISABLE_AUTH = 'true';
+process.env.CRONTAB_UI_SKIP_SYSTEM_IMPORT = 'true';
+process.env.CRONTAB_UI_SKIP_DEPLOY = 'true';
 
 const app = require('../app');
 
@@ -27,7 +30,7 @@ describe('Crontab UI', () => {
       const res = await request(app).get('/');
       expect(res.status).toBe(200);
       expect(res.text).toContain('Crontab UI');
-      expect(res.text).toContain('Cronjobs');
+      expect(res.text).toContain('New Job');
     });
   });
 

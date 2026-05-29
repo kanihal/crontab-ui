@@ -3,12 +3,14 @@ Crontab UI
 
 ## What's new in this fork
 
-**macOS users — native desktop app, no Node setup needed:**
+**macOS users — lightweight desktop launcher:**
 
-- Download from [Releases](https://github.com/kanihal/crontab-ui/releases/latest): `Crontab-UI-0.4.4-arm64.dmg` (Apple Silicon) or `Crontab-UI-0.4.4-x64.dmg` (Intel).
-- Open the DMG and drag **Crontab UI** to `/Applications`.
+- Install Node.js 20 or newer if it is not already installed.
+- Build the app with `npm run mac:app`.
+- Drag `dist/Crontab UI.app` to `/Applications`.
 - Clear the unsigned-build quarantine flag once: `xattr -dr com.apple.quarantine "/Applications/Crontab UI.app"`.
-- Launch from Spotlight or Applications. The Express server runs in the background on a free local port and shuts down when you close the window.
+- Launch from Spotlight or Applications. The app opens Terminal, starts the Express server on a free local port, and opens your default browser.
+- Press `Ctrl+C` in Terminal or close the Terminal window to stop the server.
 - Cron data lives at `~/Library/Application Support/crontab-ui/crontabs/`.
 
 ![Crontab UI in dark mode](screenshots/ui-dark-overview.png)
@@ -36,7 +38,7 @@ Crontab UI
 
 **Other**
 - `express-rate-limit` default raised from `300 req / 15 min` to `1000 req / 10 min` so static-asset-heavy refreshes don't trigger 429s.
-- macOS desktop app (Electron wrapper) — see the install callout above; build it yourself with `npm run icon && npm run dist:mac`.
+- macOS desktop launcher — see the install callout above; build it yourself with `npm run mac:app`.
 
 For a per-release breakdown see the [Releases page](https://github.com/kanihal/crontab-ui/releases).
 
@@ -76,7 +78,7 @@ By default, db, backups and logs are stored in the installation directory. It is
 
 Three modes are supported, resolved in this order:
 
-1. **Disabled** — set `CRONTAB_UI_DISABLE_AUTH=true`. No auth is applied regardless of other vars. The bundled Electron desktop app sets this automatically and always runs without a login wall.
+1. **Disabled** — set `CRONTAB_UI_DISABLE_AUTH=true`. No auth is applied regardless of other vars. The macOS desktop launcher sets this automatically and always runs without a login wall.
 2. **JWT login** — set `ENABLE_AUTH=true`. The UI renders a login screen at `/login`; on success, a JWT is issued in an httpOnly, SameSite=strict cookie. Required env vars:
    - `BASIC_AUTH_USER`, `BASIC_AUTH_PWD` — login credentials (reused from basic-auth mode).
    - `JWT_SECRET` — token signing secret. Generate with `openssl rand -hex 32`.

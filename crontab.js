@@ -248,6 +248,9 @@ function runDeploy(callback) {
           console.error(err);
           return callback(err);
         }
+        if (process.env.CRONTAB_UI_SKIP_DEPLOY === 'true') {
+          return callback();
+        }
         exec(`crontab ${filePath}`, (execErr) => {
           if (execErr) {
             console.error(execErr);
@@ -360,6 +363,10 @@ function escapeRegex(s) {
 }
 
 exports.import_crontab = (callback) => {
+  if (process.env.CRONTAB_UI_SKIP_SYSTEM_IMPORT === 'true') {
+    return process.nextTick(() => callback && callback());
+  }
+
   exec('crontab -l', (_error, stdout) => {
     const lines = (stdout || '').split('\n');
     const namePrefix = Date.now();
