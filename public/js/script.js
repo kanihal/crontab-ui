@@ -115,6 +115,9 @@ function messageBox(body, title, ok_text, close_text, callback) {
 
 var schedule = '';
 var job_command = '';
+var job_command_mode = 'command';
+var job_code_source = 'paste';
+var codeUploadLimit = 1024 * 1024;
 
 function deleteJob(_id) {
   messageBox('<p> Do you want to delete this Job? </p>', 'Confirm delete', null, null, function() {
@@ -179,11 +182,99 @@ function refreshCrontab() {
   });
 }
 
+function setJobInputMode(mode) {
+  job_command_mode = mode === 'code' ? 'code' : 'command';
+  $('#job-mode-command').prop('checked', job_command_mode === 'command');
+  $('#job-mode-code').prop('checked', job_command_mode === 'code');
+  $('#job-command-panel').toggle(job_command_mode === 'command');
+  $('#job-code-panel').toggle(job_command_mode === 'code');
+  job_string();
+}
+
+function markCodeSource(source) {
+  job_code_source = source === 'upload' ? 'upload' : 'paste';
+}
+
+function setCodeStatus(message, isError) {
+  var el = document.getElementById('job-code-status');
+  if (!el) return;
+  el.textContent = message;
+  el.classList.toggle('text-danger', !!isError);
+  el.classList.toggle('text-muted', !isError);
+}
+
+function clearCodeInputs() {
+  $('#job-code-filename').val('');
+  $('#job-code-file').val('');
+  $('#job-code-content').val('');
+  $('#job-code-current').hide().text('');
+  job_code_source = 'paste';
+  setCodeStatus('Use .sh, .bash, .py, .js, .mjs, or .cjs. Max 1 MiB.', false);
+}
+
+function loadCodeFile(input) {
+  var file = input && input.files && input.files[0];
+  if (!file) return;
+  if (file.size > codeUploadLimit) {
+    setCodeStatus('File is larger than 1 MiB.', true);
+    input.value = '';
+    return;
+  }
+  $('#job-code-filename').val(file.name);
+  var reader = new FileReader();
+  reader.onload = function() {
+    $('#job-code-content').val(String(reader.result || ''));
+    markCodeSource('upload');
+    setCodeStatus('Loaded ' + file.name + ' for this job.', false);
+    job_string();
+  };
+  reader.onerror = function() {
+    setCodeStatus('Could not read the selected file.', true);
+  };
+  reader.readAsText(file);
+}
+
+function codePayload() {
+  var content = $('#job-code-content').val();
+  return {
+    commandMode: job_command_mode,
+    codeFilename: $('#job-code-filename').val(),
+    codeContent: content,
+    codeSource: job_code_source,
+  };
+}
+
+function savePayload(_id) {
+  var payload = {
+    name: $('#job-name').val(),
+    command: collapsedCommand(),
+    schedule: schedule || '* * * * *',
+    _id: _id,
+    logging: $('#job-logging').prop('checked'),
+    mailing: JSON.parse($('#job-mailing').attr('data-json')),
+    envVars: $('#job-env-vars').val(),
+    commandMode: job_command_mode,
+  };
+  if (_id !== -1) {
+    payload.version = $('#job-version').val();
+  }
+  if (job_command_mode === 'code') {
+    Object.assign(payload, codePayload());
+  }
+  return payload;
+}
+
 function testRunJob() {
-  var command = collapsedCommand();
+  var payload = job_command_mode === 'code' && $('#job-code-content').val()
+    ? codePayload()
+    : { commandMode: job_command_mode, command: collapsedCommand() };
+  payload.envVars = $('#job-env-vars').val();
+  var command = payload.commandMode === 'code' && payload.codeContent
+    ? payload.codeContent
+    : payload.command;
   var envVars = $('#job-env-vars').val();
   if (!command || !command.trim()) {
-    errorMessageBox('Enter a command before running');
+    errorMessageBox(job_command_mode === 'code' ? 'Enter code before running' : 'Enter a command before running');
     return;
   }
   var btn = document.getElementById('job-test-run');
@@ -195,7 +286,7 @@ function testRunJob() {
   wrap.style.display = 'block';
   status.textContent = '';
   pre.textContent = '(running)';
-  $.post(routes.test_run, { command: command, envVars: envVars || '' }, function(result) {
+  $.post(routes.test_run, payload, function(result) {
     var parts = [];
     if (result.stdout) parts.push('--- stdout ---\n' + result.stdout);
     if (result.stderr) parts.push('--- stderr ---\n' + result.stderr);
@@ -227,7 +318,7 @@ function handleSaveFailure(xhr) {
 function editJob(_id) {
   var job = null;
   crontabs.forEach(function(crontab) {
-    if (crontab._id == _id) job = crontab;
+    if (crontab._id === _id) job = crontab;
   });
 
   resetTestResult();
@@ -235,6 +326,7 @@ function editJob(_id) {
     getModal('job').show();
     $('#job-name').val(job.name);
     $('#job-command').val(job.command);
+    clearCodeInputs();
     $('#job-env-vars').val(job.envVars || '');
     $('#job-version').val(job.version != null ? job.version : '');
     if (job.schedule.indexOf('@') !== 0) {
@@ -250,8 +342,20 @@ function editJob(_id) {
     }
     schedule = job.schedule;
     job_command = job.command;
-    if (job.logging && job.logging != 'false')
-      $('#job-logging').prop('checked', true);
+    $('#job-logging').prop('checked', !!(job.logging && job.logging !== 'false'));
+    if (job.commandMode === 'code') {
+      setJobInputMode('code');
+      var currentUpload = job.currentCodeUpload || null;
+      if (currentUpload) {
+        $('#job-code-filename').val(currentUpload.filename || '');
+        $('#job-code-current')
+          .text('Current: ' + (currentUpload.filename || 'code file') + ' v' + currentUpload.version)
+          .show();
+        setCodeStatus('Paste or upload new code to create a new version.', false);
+      }
+    } else {
+      setJobInputMode('command');
+    }
     job_string();
   }
 
@@ -260,12 +364,7 @@ function editJob(_id) {
   saveBtn.parentNode.replaceChild(newSaveBtn, saveBtn);
   newSaveBtn.addEventListener('click', function() {
     if (!schedule) schedule = '* * * * *';
-    var name = $('#job-name').val();
-    var mailing = JSON.parse($('#job-mailing').attr('data-json'));
-    var logging = $('#job-logging').prop('checked');
-    var version = $('#job-version').val();
-    var envVars = $('#job-env-vars').val();
-    $.post(routes.save, {name: name, command: collapsedCommand(), schedule: schedule, _id: _id, logging: logging, mailing: mailing, version: version, envVars: envVars}, function() {
+    $.post(routes.save, savePayload(_id), function() {
       location.reload();
     }).fail(handleSaveFailure);
     getModal('job').hide();
@@ -285,10 +384,12 @@ function newJob() {
   getModal('job').show();
   $('#job-name').val('');
   $('#job-command').val('');
+  clearCodeInputs();
   $('#job-env-vars').val('');
   $('#job-version').val('');
   $('#job-mailing').attr('data-json', '{}');
   $('#job-logging').prop('checked', false);
+  setJobInputMode('command');
   job_string();
 
   var saveBtn = document.getElementById('job-save');
@@ -296,11 +397,7 @@ function newJob() {
   saveBtn.parentNode.replaceChild(newSaveBtn, saveBtn);
   newSaveBtn.addEventListener('click', function() {
     if (!schedule) schedule = '* * * * *';
-    var name = $('#job-name').val();
-    var mailing = JSON.parse($('#job-mailing').attr('data-json'));
-    var logging = $('#job-logging').prop('checked');
-    var envVars = $('#job-env-vars').val();
-    $.post(routes.save, {name: name, command: collapsedCommand(), schedule: schedule, _id: -1, logging: logging, mailing: mailing, envVars: envVars}, function() {
+    $.post(routes.save, savePayload(-1), function() {
       location.reload();
     }).fail(handleSaveFailure);
     getModal('job').hide();
@@ -310,12 +407,12 @@ function newJob() {
 function duplicateJob(_id) {
   var job = null;
   crontabs.forEach(function(crontab) {
-    if (crontab._id == _id) job = crontab;
+    if (crontab._id === _id) job = crontab;
   });
   if (!job) return;
 
   var name = job.name ? job.name + ' (copy)' : '';
-  var logging = (job.logging && job.logging != 'false') ? job.logging : 'false';
+  var logging = (job.logging && job.logging !== 'false') ? job.logging : 'false';
   var mailing = job.mailing || {};
 
   $.post(routes.save, {
@@ -517,6 +614,10 @@ function collapsedCommand() {
 
 function job_string() {
   var cmd = collapsedCommand();
+  if (job_command_mode === 'code' && !cmd) {
+    var filename = $('#job-code-filename').val();
+    cmd = filename ? ('managed code: ' + filename) : 'managed code file';
+  }
   $('#job-string').val(schedule + ' ' + cmd);
   updateScheduleHuman(schedule);
   return schedule + ' ' + cmd;

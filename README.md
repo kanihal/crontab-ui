@@ -29,6 +29,8 @@ Crontab UI
 - **Live human-readable schedule preview** next to the Set button — the cron expression rendered in plain English by [`cronstrue`](https://github.com/bradymholt/cRonstrue) (bundled client-side, ~22 KB). Updates as you type in any cron field, on every Quick Schedule click, and on open. Stays blank for the all-`*` default and half-typed expressions.
 - **Inline Test Run** — a **Test Run** button in the Job modal executes the command (with the configured environment variables prepended) and shows exit code, stdout, and stderr inline. No need to wait for the next cron tick to verify your command works.
 - **Per-job environment variables** — an **Environment Variables (Optional)** field in the Job modal accepts one `KEY=value` per line (e.g. `PATH=/usr/local/bin:/usr/bin`, `MAILTO=ops@example.com`). Prepended to the command at both deploy time and Test Run, so you don't have to bake them into a wrapper script.
+- **Uploaded or pasted code jobs** — switch the Job modal from **Command** to **Code**, then upload or paste a `.sh`, `.bash`, `.py`, `.js`, `.mjs`, or `.cjs` script. Crontab UI saves it as a managed file and runs it with `bash`, `python3`, or `node`.
+  Managed code files are materialized under `CRONTAB_UI_CODE_PATH` when set, otherwise under `CRON_DB_PATH/code_uploads`. If `CRON_DB_PATH` points inside the system temp directory, Crontab UI falls back to the OS user-data directory instead of writing runnable cron files under `/tmp`: Linux uses `${XDG_DATA_HOME:-~/.local/share}/crontab-ui/code_uploads`, macOS uses `~/Library/Application Support/crontab-ui/code_uploads`, and Windows uses `%LOCALAPPDATA%\crontab-ui\code_uploads`.
 
 **Backups & import**
 - Named backups: clicking **Backup** opens a small modal pre-filled with a local timestamp; supply any name and it's saved as `backup <name>.db`. Re-using the same name overwrites the previous file by design. Backups dropdown is sorted by mtime (newest first) and labels strip the `backup ` / `.db` boilerplate.
@@ -116,6 +118,7 @@ If you need to autosave your changes to crontab directly:
 - BASE_URL
 - CRON_DB_PATH
 - CRON_PATH
+- CRONTAB_UI_CODE_PATH
 - BASIC_AUTH_USER, BASIC_AUTH_PWD
 - ENABLE_AUTH, JWT_SECRET, JWT_EXPIRES_IN
 - CRONTAB_UI_DISABLE_AUTH

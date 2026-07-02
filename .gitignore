@@ -1,6 +1,7 @@
 *.swp
 node_modules
 crontabs/*.db
+crontabs/code_uploads/
 crontabs/logs/*.log
 dist/
 build/icon.icns

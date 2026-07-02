@@ -2,6 +2,7 @@
 
 const Datastore = require('@seald-io/nedb');
 const path = require('path');
+const os = require('os');
 const { exec } = require('child_process');
 const fs = require('fs');
 const { CronExpressionParser } = require('cron-parser');
@@ -15,6 +16,47 @@ console.log(`Cron db path: ${dbFolder}`);
 const logFolder = path.join(dbFolder, 'logs');
 const envFile = path.join(dbFolder, 'env.db');
 const crontabDbFile = path.join(dbFolder, 'crontab.db');
+const maxCodeUploadBytes = 1024 * 1024;
+const codeRunnerByExtension = {
+  '.sh': 'bash',
+  '.bash': 'bash',
+  '.py': 'python3',
+  '.js': 'node',
+  '.mjs': 'node',
+  '.cjs': 'node',
+};
+
+function isPathInside(parent, child) {
+  const relative = path.relative(path.resolve(parent), path.resolve(child));
+  return relative === '' || (!!relative && !relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function defaultDataFolder() {
+  const home = os.homedir();
+  if (!home) return path.join(__dirname, 'crontabs');
+  if (process.platform === 'darwin') {
+    return path.join(home, 'Library', 'Application Support', 'crontab-ui');
+  }
+  if (process.platform === 'win32') {
+    return path.join(process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local'), 'crontab-ui');
+  }
+  return path.join(process.env.XDG_DATA_HOME || path.join(home, '.local', 'share'), 'crontab-ui');
+}
+
+function resolveCodeUploadsFolder() {
+  if (process.env.CRONTAB_UI_CODE_PATH) {
+    return path.resolve(process.env.CRONTAB_UI_CODE_PATH);
+  }
+
+  if (isPathInside(os.tmpdir(), dbFolder)) {
+    return path.join(defaultDataFolder(), 'code_uploads');
+  }
+
+  return path.join(dbFolder, 'code_uploads');
+}
+
+const codeUploadsFolder = resolveCodeUploadsFolder();
+console.log(`Code uploads path: ${codeUploadsFolder}`);
 // PATCH: prologue lines prepended to every deployed crontab. Used to set
 // SHELL=/bin/bash so cron lines run under bash (the default /bin/sh on
 // Ubuntu is dash, which has no `source` builtin). User-editable via the
@@ -26,14 +68,14 @@ function readGlobalsSync() {
   try {
     const content = fs.readFileSync(globalsFile, 'utf8');
     return content.endsWith('\n') ? content : content + '\n';
-  } catch (e) {
+  } catch (_e) {
     return defaultGlobals;
   }
 }
 exports.get_globals = () => {
   try {
     return fs.readFileSync(globalsFile, 'utf8');
-  } catch (e) {
+  } catch (_e) {
     return defaultGlobals;
   }
 };
@@ -58,6 +100,162 @@ if (!fs.existsSync(logFolder)) {
   fs.mkdirSync(logFolder);
 }
 
+if (!fs.existsSync(codeUploadsFolder)) {
+  fs.mkdirSync(codeUploadsFolder, { recursive: true, mode: 0o700 });
+}
+
+function requestError(status, message, err) {
+  return { status, message, err };
+}
+
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, "'\\''")}'`;
+}
+
+function sanitizeCodeFilename(rawName) {
+  const filename = String(rawName || '').trim();
+  if (!filename) {
+    throw requestError(400, 'Code file name is required');
+  }
+  if (filename !== path.basename(filename)) {
+    throw requestError(400, 'Code file name must not contain a path');
+  }
+  if (!/^[A-Za-z0-9._-]+$/.test(filename) || filename === '.' || filename === '..') {
+    throw requestError(400, 'Code file name contains unsupported characters');
+  }
+  if (filename.length > 128) {
+    throw requestError(400, 'Code file name is too long');
+  }
+  return filename;
+}
+
+function runnerForCodeFilename(filename) {
+  const extension = path.extname(filename).toLowerCase();
+  const runner = codeRunnerByExtension[extension];
+  if (!runner) {
+    throw requestError(400, 'Code file must end in .sh, .bash, .py, .js, .mjs, or .cjs');
+  }
+  return runner;
+}
+
+function normalizeCodeContent(rawContent) {
+  if (typeof rawContent !== 'string') {
+    throw requestError(400, 'Code content is required');
+  }
+  const content = rawContent.replace(/\r\n/g, '\n');
+  if (!content.trim()) {
+    throw requestError(400, 'Code content is required');
+  }
+  if (content.includes('\0')) {
+    throw requestError(400, 'Code content must be text');
+  }
+  const size = Buffer.byteLength(content, 'utf8');
+  if (size > maxCodeUploadBytes) {
+    throw requestError(400, 'Code content must be 1 MiB or smaller');
+  }
+  return { content, size };
+}
+
+function nextCodeVersion(uploads) {
+  return (uploads || []).reduce((max, upload) => (
+    Math.max(max, Number(upload.version) || 0)
+  ), 0) + 1;
+}
+
+function buildCodeUpload(data, version) {
+  const filename = sanitizeCodeFilename(data.codeFilename);
+  const runner = runnerForCodeFilename(filename);
+  const normalized = normalizeCodeContent(data.codeContent);
+  const source = data.codeSource === 'upload' ? 'upload' : 'paste';
+
+  return {
+    id: `v${version}-${Date.now()}`,
+    version,
+    filename,
+    runner,
+    source,
+    content: normalized.content,
+    size: normalized.size,
+    created: new Date().toISOString(),
+  };
+}
+
+function currentCodeUpload(tab) {
+  if (!Array.isArray(tab.codeUploads) || tab.codeUploads.length === 0) return null;
+  if (tab.currentCodeUploadId) {
+    const current = tab.codeUploads.find((upload) => upload.id === tab.currentCodeUploadId);
+    if (current) return current;
+  }
+  return tab.codeUploads[tab.codeUploads.length - 1];
+}
+
+function codeUploadFilePath(jobId, upload) {
+  const filename = sanitizeCodeFilename(upload.filename);
+  return path.join(
+    codeUploadsFolder,
+    'jobs',
+    String(jobId),
+    'versions',
+    String(upload.version || 1),
+    filename
+  );
+}
+
+function commandForCodeUpload(jobId, upload) {
+  const filename = sanitizeCodeFilename(upload.filename);
+  const runner = runnerForCodeFilename(filename);
+  return `${runner} ${shellQuote(codeUploadFilePath(jobId, upload))}`;
+}
+
+function materializeCodeUploadSync(jobId, upload) {
+  if (!upload || typeof upload.content !== 'string') {
+    return commandForCodeUpload(jobId, upload);
+  }
+  const filePath = codeUploadFilePath(jobId, upload);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(filePath, upload.content, { mode: 0o700 });
+  fs.chmodSync(filePath, 0o700);
+  return commandForCodeUpload(jobId, upload);
+}
+
+function commandForTab(tab) {
+  if (tab.commandMode === 'code') {
+    const upload = currentCodeUpload(tab);
+    if (upload) {
+      try {
+        return materializeCodeUploadSync(tab._id, upload);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+  }
+  return tab.command || '';
+}
+
+function redactedCodeUpload(upload) {
+  const copy = { ...upload };
+  copy.hasContent = typeof copy.content === 'string' && copy.content.length > 0;
+  delete copy.content;
+  return copy;
+}
+
+function publicCrontab(doc) {
+  const copy = { ...doc };
+  if (copy.commandMode === 'code') {
+    const upload = currentCodeUpload(copy);
+    if (upload) {
+      try {
+        copy.command = commandForCodeUpload(copy._id, upload);
+        copy.currentCodeUpload = redactedCodeUpload(upload);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    copy.codeUploads = (copy.codeUploads || []).map(redactedCodeUpload);
+  }
+  return copy;
+}
+
 function buildCrontab(name, command, schedule, stopped, logging, mailing, envVars) {
   return {
     name,
@@ -77,7 +275,7 @@ function makeCommand(tab) {
   const logFile = path.join(logFolder, `${tab._id}.log`);
   const logFileStdout = path.join(logFolder, `${tab._id}.stdout.log`);
 
-  let cmd = tab.command;
+  let cmd = commandForTab(tab);
   if (cmd[cmd.length - 1] !== ';') {
     cmd += ';';
   }
@@ -113,13 +311,91 @@ exports.db_folder = dbFolder;
 exports.log_folder = logFolder;
 exports.env_file = envFile;
 exports.crontab_db_file = crontabDbFile;
+exports.code_uploads_folder = codeUploadsFolder;
 
-exports.create_new = (name, command, schedule, logging, mailing, envVars, callback) => {
-  const tab = buildCrontab(name, command, schedule, false, logging, mailing, envVars);
+function normalizeCreateArgs(nameOrData, command, schedule, logging, mailing, envVars, callback) {
+  if (typeof nameOrData === 'object' && nameOrData !== null) {
+    return { data: nameOrData, callback: command };
+  }
+  return {
+    data: { name: nameOrData, command, schedule, logging, mailing, envVars },
+    callback,
+  };
+}
+
+function baseUpdatesFromData(data, version) {
+  return {
+    name: data.name,
+    schedule: data.schedule,
+    timestamp: new Date().toString(),
+    logging: data.logging,
+    mailing: data.mailing || {},
+    envVars: data.envVars || '',
+    version,
+  };
+}
+
+function hasSubmittedCode(data) {
+  return Object.prototype.hasOwnProperty.call(data, 'codeContent') && data.codeContent !== '';
+}
+
+exports.create_new = (nameOrData, command, schedule, logging, mailing, envVars, callback) => {
+  const normalized = normalizeCreateArgs(nameOrData, command, schedule, logging, mailing, envVars, callback);
+  const data = normalized.data;
+  const cb = normalized.callback;
+  const codeMode = data.commandMode === 'code';
+  let upload = null;
+
+  if (codeMode) {
+    try {
+      upload = buildCodeUpload(data, 1);
+    } catch (e) {
+      if (cb) cb(e);
+      return;
+    }
+  }
+
+  const tab = buildCrontab(
+    data.name,
+    codeMode ? '' : data.command,
+    data.schedule,
+    false,
+    data.logging,
+    data.mailing,
+    data.envVars
+  );
   tab.created = Date.now();
   tab.version = 0;
+  tab.commandMode = codeMode ? 'code' : 'command';
+  tab.codeUploads = [];
+  tab.currentCodeUploadId = '';
+
   db.insert(tab, (err, newDoc) => {
-    if (callback) callback(err, newDoc);
+    if (err || !codeMode) {
+      if (cb) cb(err, newDoc);
+      return;
+    }
+
+    upload.command = commandForCodeUpload(newDoc._id, upload);
+    try {
+      materializeCodeUploadSync(newDoc._id, upload);
+    } catch (e) {
+      db.remove({ _id: newDoc._id }, {}, () => {});
+      if (cb) cb(requestError(500, 'Unable to save code file', e));
+      return;
+    }
+
+    const updates = {
+      command: upload.command,
+      codeUploads: [upload],
+      currentCodeUploadId: upload.id,
+    };
+    db.update({ _id: newDoc._id }, { $set: updates }, {}, (uerr) => {
+      if (cb) cb(uerr ? requestError(500, 'Unable to save code job', uerr) : null, {
+        ...newDoc,
+        ...updates,
+      });
+    });
   });
 };
 
@@ -134,18 +410,47 @@ exports.update = (data, callback) => {
       return callback && callback({ status: 409, doc });
     }
 
-    const updates = {
-      name: data.name,
-      command: data.command,
-      schedule: data.schedule,
-      timestamp: new Date().toString(),
-      logging: data.logging,
-      mailing: data.mailing || {},
-      envVars: data.envVars || '',
-      version: currentVersion + 1,
-    };
+    const updates = baseUpdatesFromData(data, currentVersion + 1);
+
+    if (data.commandMode === 'code') {
+      const uploads = Array.isArray(doc.codeUploads) ? doc.codeUploads.slice() : [];
+      let upload = null;
+
+      if (hasSubmittedCode(data)) {
+        try {
+          upload = buildCodeUpload(data, nextCodeVersion(uploads));
+          upload.command = commandForCodeUpload(data._id, upload);
+          materializeCodeUploadSync(data._id, upload);
+        } catch (e) {
+          return callback && callback(e);
+        }
+        uploads.push(upload);
+      } else {
+        upload = currentCodeUpload(doc);
+        if (!upload) {
+          return callback && callback(requestError(400, 'Code content is required'));
+        }
+        try {
+          upload.command = commandForCodeUpload(data._id, upload);
+          materializeCodeUploadSync(data._id, upload);
+        } catch (e) {
+          return callback && callback(requestError(500, 'Unable to save code file', e));
+        }
+      }
+
+      updates.commandMode = 'code';
+      updates.command = upload.command;
+      updates.codeUploads = uploads;
+      updates.currentCodeUploadId = upload.id;
+    } else {
+      updates.commandMode = 'command';
+      updates.command = data.command;
+      updates.codeUploads = [];
+      updates.currentCodeUploadId = '';
+    }
+
     db.update({ _id: data._id }, { $set: updates }, {}, (uerr) => {
-      if (callback) callback(uerr ? { status: 500, err: uerr } : null);
+      if (callback) callback(uerr ? requestError(500, 'Unable to update job', uerr) : null);
     });
   });
 };
@@ -185,6 +490,12 @@ exports.crontabs = (callback) => {
   });
 };
 
+exports.public_crontabs = (callback) => {
+  exports.crontabs((docs) => {
+    callback(docs.map(publicCrontab));
+  });
+};
+
 exports.get_crontab = (_id, callback) => {
   db.find({ _id }).exec((err, docs) => {
     callback(docs[0]);
@@ -209,13 +520,45 @@ exports.runjob = (_id) => {
   });
 };
 
-exports.test_run = (command, envVars, callback) => {
+function testRunCommandFromData(data) {
+  if (data.commandMode === 'code' && hasSubmittedCode(data)) {
+    const upload = buildCodeUpload(data, 1);
+    const testJobId = `test-${process.pid}-${Date.now()}`;
+    const jobRoot = path.join(codeUploadsFolder, 'jobs', testJobId);
+    upload.command = commandForCodeUpload(testJobId, upload);
+    materializeCodeUploadSync(testJobId, upload);
+    return {
+      command: upload.command,
+      cleanup: () => fs.rmSync(jobRoot, { recursive: true, force: true }),
+    };
+  }
+
+  return { command: data.command || '', cleanup: null };
+}
+
+exports.test_run = (commandOrData, envVarsOrCallback, callback) => {
+  const dataMode = typeof commandOrData === 'object' && commandOrData !== null;
+  const envVars = dataMode ? commandOrData.envVars : envVarsOrCallback;
+  const cb = dataMode ? envVarsOrCallback : callback;
+  let prepared;
+
+  try {
+    prepared = dataMode
+      ? testRunCommandFromData(commandOrData)
+      : { command: commandOrData, cleanup: null };
+  } catch (e) {
+    return cb(e);
+  }
+
+  const command = prepared.command;
   if (!command || !command.trim()) {
-    return callback({ status: 400, message: 'Command is required' });
+    if (prepared.cleanup) prepared.cleanup();
+    return cb({ status: 400, message: 'Command is required' });
   }
   const wrapped = addEnvVars(envVars, command);
   exec(wrapped, { timeout: 30000, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
-    callback(null, {
+    if (prepared.cleanup) prepared.cleanup();
+    cb(null, {
       stdout: stdout || '',
       stderr: stderr || '',
       exitCode: error ? (error.code != null ? error.code : 1) : 0,

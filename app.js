@@ -62,8 +62,8 @@ app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 
 app.use(cookieParser());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '2mb' }));
+app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 app.use(busboy());
 
 app.use(baseUrl, express.static(path.join(__dirname, 'public')));
@@ -91,7 +91,7 @@ applyProtection(app);
 app.get(routes.root, (req, res) => {
   crontab.reload_db();
   crontab.import_crontab(() => {
-    crontab.crontabs((docs) => {
+    crontab.public_crontabs((docs) => {
       res.render('index', {
         routes: JSON.stringify(routesRelative),
         crontabs: JSON.stringify(docs),
@@ -107,6 +107,9 @@ app.post(routes.save, (req, res, next) => {
     if (err && err.status === 409) {
       return res.status(409).json({ message: 'Job was modified elsewhere', doc: err.doc });
     }
+    if (err && err.status && err.status < 500) {
+      return res.status(err.status).json({ message: err.message || 'Request failed' });
+    }
     if (err) return next(err.err || err);
     crontab.deploy((deployErr) => {
       if (deployErr) return next(deployErr);
@@ -114,15 +117,7 @@ app.post(routes.save, (req, res, next) => {
     });
   };
   if (req.body._id == -1) { // eslint-disable-line eqeqeq
-    crontab.create_new(
-      req.body.name,
-      req.body.command,
-      req.body.schedule,
-      req.body.logging,
-      req.body.mailing,
-      req.body.envVars,
-      afterDb,
-    );
+    crontab.create_new(req.body, afterDb);
   } else {
     crontab.update(req.body, afterDb);
   }
@@ -164,7 +159,7 @@ app.post(routes.run, (req, res) => {
 });
 
 app.post(routes.test_run, (req, res, next) => {
-  crontab.test_run(req.body.command, req.body.envVars, (err, result) => {
+  crontab.test_run(req.body, (err, result) => {
     if (err && err.status === 400) return res.status(400).json(err);
     if (err) return next(err);
     res.json(result);

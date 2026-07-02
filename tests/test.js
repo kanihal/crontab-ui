@@ -12,6 +12,7 @@ fs.mkdirSync(path.join(testDbPath, 'logs'), { recursive: true });
 
 process.env.CRON_DB_PATH = testDbPath;
 process.env.CRON_PATH = testDbPath;
+process.env.CRONTAB_UI_CODE_PATH = path.join(testDbPath, 'code_uploads');
 process.env.PORT = '0';
 process.env.HOST = '127.0.0.1';
 process.env.CRONTAB_UI_DISABLE_AUTH = 'true';
@@ -19,6 +20,15 @@ process.env.CRONTAB_UI_SKIP_SYSTEM_IMPORT = 'true';
 process.env.CRONTAB_UI_SKIP_DEPLOY = 'true';
 
 const app = require('../app');
+const crontab = require('../crontab');
+
+function findJobByName(name) {
+  return new Promise((resolve) => {
+    crontab.crontabs((docs) => {
+      resolve(docs.find((doc) => doc.name === name));
+    });
+  });
+}
 
 describe('Crontab UI', () => {
   afterAll(() => {
@@ -54,6 +64,172 @@ describe('Crontab UI', () => {
       expect(res.status).toBe(200);
       expect(res.text).toContain('test-job');
       expect(res.text).toContain('echo hello');
+    });
+  });
+
+  describe('Code jobs', () => {
+    it('should create a shell job from uploaded code', async () => {
+      const res = await request(app)
+        .post('/save')
+        .send({
+          _id: -1,
+          name: 'uploaded-shell-code',
+          commandMode: 'code',
+          codeFilename: 'backup.sh',
+          codeContent: 'echo uploaded-shell-secret\n',
+          codeSource: 'upload',
+          schedule: '* * * * *',
+          logging: 'false',
+          mailing: {},
+        });
+      expect(res.status).toBe(200);
+
+      const job = await findJobByName('uploaded-shell-code');
+      expect(job.command).toContain('bash');
+      expect(job.command).toContain('backup.sh');
+      expect(fs.existsSync(path.join(
+        testDbPath, 'code_uploads', 'jobs', job._id, 'versions', '1', 'backup.sh'
+      ))).toBe(true);
+    });
+
+    it('should create Python and Node jobs from uploaded code', async () => {
+      const py = await request(app)
+        .post('/save')
+        .send({
+          _id: -1,
+          name: 'uploaded-python-code',
+          commandMode: 'code',
+          codeFilename: 'sync.py',
+          codeContent: 'print("uploaded-python-secret")\n',
+          codeSource: 'upload',
+          schedule: '* * * * *',
+          logging: 'false',
+          mailing: {},
+        });
+      expect(py.status).toBe(200);
+
+      const js = await request(app)
+        .post('/save')
+        .send({
+          _id: -1,
+          name: 'uploaded-node-code',
+          commandMode: 'code',
+          codeFilename: 'report.js',
+          codeContent: 'console.log("uploaded-node-secret")\n',
+          codeSource: 'upload',
+          schedule: '* * * * *',
+          logging: 'false',
+          mailing: {},
+        });
+      expect(js.status).toBe(200);
+
+      const pyJob = await findJobByName('uploaded-python-code');
+      const jsJob = await findJobByName('uploaded-node-code');
+      expect(pyJob.command).toContain('python3');
+      expect(pyJob.command).toContain('sync.py');
+      expect(jsJob.command).toContain('node');
+      expect(jsJob.command).toContain('report.js');
+    });
+
+    it('should create a job from pasted code', async () => {
+      const res = await request(app)
+        .post('/save')
+        .send({
+          _id: -1,
+          name: 'pasted-code-job',
+          commandMode: 'code',
+          codeFilename: 'paste.sh',
+          codeContent: 'echo pasted-page-secret\n',
+          codeSource: 'paste',
+          schedule: '* * * * *',
+          logging: 'false',
+          mailing: {},
+        });
+      expect(res.status).toBe(200);
+
+      const job = await findJobByName('pasted-code-job');
+      expect(job.codeUploads).toHaveLength(1);
+      expect(job.codeUploads[0].source).toBe('paste');
+    });
+
+    it('should reject invalid pasted or uploaded code inputs', async () => {
+      const base = {
+        _id: -1,
+        name: 'invalid-code-job',
+        commandMode: 'code',
+        schedule: '* * * * *',
+        logging: 'false',
+        mailing: {},
+      };
+
+      const missingName = await request(app)
+        .post('/save')
+        .send({ ...base, codeFilename: '', codeContent: 'echo ok\n' });
+      expect(missingName.status).toBe(400);
+
+      const unsupported = await request(app)
+        .post('/save')
+        .send({ ...base, codeFilename: 'task.rb', codeContent: 'puts "no"\n' });
+      expect(unsupported.status).toBe(400);
+
+      const empty = await request(app)
+        .post('/save')
+        .send({ ...base, codeFilename: 'empty.sh', codeContent: '' });
+      expect(empty.status).toBe(400);
+
+      const unsafe = await request(app)
+        .post('/save')
+        .send({ ...base, codeFilename: '../unsafe.sh', codeContent: 'echo no\n' });
+      expect(unsafe.status).toBe(400);
+
+      const oversized = await request(app)
+        .post('/save')
+        .send({ ...base, codeFilename: 'large.sh', codeContent: 'x'.repeat(1024 * 1024 + 1) });
+      expect(oversized.status).toBe(400);
+    });
+
+    it('should append a new active version when editing a code job', async () => {
+      const before = await findJobByName('pasted-code-job');
+      expect(before.codeUploads).toHaveLength(1);
+
+      const res = await request(app)
+        .post('/save')
+        .send({
+          _id: before._id,
+          version: before.version,
+          name: before.name,
+          commandMode: 'code',
+          command: before.command,
+          codeFilename: 'paste.py',
+          codeContent: 'print("pasted-v2-secret")\n',
+          codeSource: 'paste',
+          schedule: before.schedule,
+          logging: before.logging,
+          mailing: before.mailing,
+          envVars: before.envVars,
+        });
+      expect(res.status).toBe(200);
+
+      const after = await findJobByName('pasted-code-job');
+      expect(after.codeUploads).toHaveLength(2);
+      expect(after.currentCodeUploadId).toBe(after.codeUploads[1].id);
+      expect(after.command).toContain('python3');
+      expect(after.command).toContain('paste.py');
+    });
+
+    it('should preview generated runner commands and not render script content on the page', async () => {
+      const preview = await request(app).get('/preview_crontab');
+      expect(preview.status).toBe(200);
+      expect(preview.text).toContain('backup.sh');
+      expect(preview.text).toContain('paste.py');
+
+      const page = await request(app).get('/');
+      expect(page.status).toBe(200);
+      expect(page.text).toContain('pasted-code-job');
+      expect(page.text).toContain('currentCodeUpload');
+      expect(page.text).not.toContain('uploaded-shell-secret');
+      expect(page.text).not.toContain('pasted-page-secret');
+      expect(page.text).not.toContain('pasted-v2-secret');
     });
   });
 
@@ -148,9 +324,12 @@ describe('Crontab UI', () => {
 
       const res = await request(app).get('/preview_crontab');
       const lines = res.text.trim().split('\n').filter((l) => l.includes('echo hello'));
-      const activePage = await request(app).get('/');
-      const activeCount = (activePage.text.match(/stopJob\('/g) || []).length;
-      expect(lines.length).toBe(activeCount);
+      const activeEchoCount = await new Promise((resolve) => {
+        crontab.crontabs((docs) => {
+          resolve(docs.filter((doc) => !doc.stopped && doc.command === 'echo hello').length);
+        });
+      });
+      expect(lines.length).toBe(activeEchoCount);
 
       await request(app).post('/start').send({ _id: match[1] });
     });

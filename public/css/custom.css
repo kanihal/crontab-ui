@@ -325,11 +325,30 @@ div.dataTables_wrapper div.dataTables_filter label {
 }
 
 #job-command,
+#job-code-content,
 #job-env-vars {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 0.78rem;
   line-height: 1.35;
   padding: 0.35rem 0.5rem;
+}
+
+#job .job-mode-switch .btn {
+  min-width: 6.5rem;
+}
+
+#job .job-code-panel {
+  border: 1px solid var(--app-card-border);
+  border-radius: 8px;
+  padding: 0.55rem;
+  background-color: rgba(127, 127, 127, 0.04);
+}
+
+#job #job-code-current {
+  font-weight: 500;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Compact job modal so it fits without scrolling on typical screens. */
@@ -348,6 +367,7 @@ div.dataTables_wrapper div.dataTables_filter label {
 #job .modal-body .d-flex.align-items-end > div .form-label { font-size: 0.7rem; }
 #job .modal-body .d-flex.flex-wrap.align-items-center.gap-3 { gap: 0.5rem !important; }
 #job #job-string { font-size: 0.78rem; }
+#job #job-code-content { min-height: 6.5rem; }
 #job #job-human {
   font-size: 0.7rem;
   padding: 0.15rem 0.45rem;
