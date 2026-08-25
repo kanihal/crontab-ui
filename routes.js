@@ -5,6 +5,7 @@ const baseUrl = (process.env.BASE_URL || '').replace(/\/+$/, '').trim();
 const routes = {
   root: '/',
   save: '/save',
+  code_content: '/code_content',
   run: '/runjob',
   test_run: '/test_run',
   stop: '/stop',

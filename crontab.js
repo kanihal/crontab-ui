@@ -112,6 +112,13 @@ function shellQuote(value) {
   return `'${String(value).replace(/'/g, "'\\''")}'`;
 }
 
+function sanitizeCodeJobId(rawId) {
+  if (typeof rawId !== 'string' || !rawId || /[^A-Za-z0-9_-]/.test(rawId)) {
+    throw requestError(400, 'Invalid job id');
+  }
+  return rawId;
+}
+
 function sanitizeCodeFilename(rawName) {
   const filename = String(rawName || '').trim();
   if (!filename) {
@@ -190,11 +197,12 @@ function currentCodeUpload(tab) {
 }
 
 function codeUploadFilePath(jobId, upload) {
+  const safeJobId = sanitizeCodeJobId(jobId);
   const filename = sanitizeCodeFilename(upload.filename);
   return path.join(
     codeUploadsFolder,
     'jobs',
-    String(jobId),
+    safeJobId,
     'versions',
     String(upload.version || 1),
     filename
@@ -336,7 +344,7 @@ function baseUpdatesFromData(data, version) {
 }
 
 function hasSubmittedCode(data) {
-  return Object.prototype.hasOwnProperty.call(data, 'codeContent') && data.codeContent !== '';
+  return Object.prototype.hasOwnProperty.call(data, 'codeContent');
 }
 
 exports.create_new = (nameOrData, command, schedule, logging, mailing, envVars, callback) => {
@@ -418,13 +426,23 @@ exports.update = (data, callback) => {
 
       if (hasSubmittedCode(data)) {
         try {
-          upload = buildCodeUpload(data, nextCodeVersion(uploads));
+          const submittedUpload = buildCodeUpload(data, nextCodeVersion(uploads));
+          const currentUpload = currentCodeUpload(doc);
+          const isUnchanged = currentUpload &&
+            currentUpload.filename === submittedUpload.filename &&
+            currentUpload.content === submittedUpload.content;
+
+          if (isUnchanged) {
+            upload = currentUpload;
+          } else {
+            upload = submittedUpload;
+            uploads.push(upload);
+          }
           upload.command = commandForCodeUpload(data._id, upload);
           materializeCodeUploadSync(data._id, upload);
         } catch (e) {
           return callback && callback(e);
         }
-        uploads.push(upload);
       } else {
         upload = currentCodeUpload(doc);
         if (!upload) {
@@ -493,6 +511,45 @@ exports.crontabs = (callback) => {
 exports.public_crontabs = (callback) => {
   exports.crontabs((docs) => {
     callback(docs.map(publicCrontab));
+  });
+};
+
+exports.get_current_code = (_id, callback) => {
+  let jobId;
+  try {
+    jobId = sanitizeCodeJobId(_id);
+  } catch (e) {
+    callback(e);
+    return;
+  }
+
+  db.findOne({ _id: jobId }, (err, doc) => {
+    if (err) return callback(requestError(500, 'Unable to load job', err));
+    if (!doc) return callback(requestError(404, 'Job not found'));
+    if (doc.commandMode !== 'code') {
+      return callback(requestError(400, 'Job does not use managed code'));
+    }
+
+    const upload = currentCodeUpload(doc);
+    if (!upload) return callback(requestError(404, 'Managed code file not found'));
+
+    try {
+      const filePath = codeUploadFilePath(jobId, upload);
+      if (!fs.existsSync(filePath)) {
+        if (typeof upload.content !== 'string') {
+          return callback(requestError(404, 'Managed code file not found'));
+        }
+        materializeCodeUploadSync(jobId, upload);
+      }
+      const content = fs.readFileSync(filePath, 'utf8');
+      callback(null, {
+        filename: upload.filename,
+        version: upload.version,
+        content,
+      });
+    } catch (e) {
+      callback(requestError(500, 'Unable to read managed code file', e));
+    }
   });
 };
 

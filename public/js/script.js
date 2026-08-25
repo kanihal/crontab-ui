@@ -118,6 +118,7 @@ var job_command = '';
 var job_command_mode = 'command';
 var job_code_source = 'paste';
 var codeUploadLimit = 1024 * 1024;
+var codeLoadGeneration = 0;
 
 function deleteJob(_id) {
   messageBox('<p> Do you want to delete this Job? </p>', 'Confirm delete', null, null, function() {
@@ -203,13 +204,50 @@ function setCodeStatus(message, isError) {
   el.classList.toggle('text-muted', !isError);
 }
 
+function setCodeEditorBusy(isBusy) {
+  $('#job-code-filename, #job-code-file, #job-code-content').prop('disabled', isBusy);
+  $('#job-mode-command, #job-mode-code').prop('disabled', isBusy);
+  $('#job-save, #job-test-run').prop('disabled', isBusy);
+}
+
 function clearCodeInputs() {
+  codeLoadGeneration += 1;
   $('#job-code-filename').val('');
   $('#job-code-file').val('');
   $('#job-code-content').val('');
   $('#job-code-current').hide().text('');
   job_code_source = 'paste';
+  setCodeEditorBusy(false);
   setCodeStatus('Use .sh, .bash, .py, .js, .mjs, or .cjs. Max 1 MiB.', false);
+}
+
+function loadCurrentCode(_id) {
+  var generation = ++codeLoadGeneration;
+  setCodeEditorBusy(true);
+  setCodeStatus('Loading current code...', false);
+
+  $.get(routes.code_content, {_id: _id})
+    .done(function(currentCode) {
+      if (generation !== codeLoadGeneration) return;
+      $('#job-code-filename').val(currentCode.filename || '');
+      $('#job-code-content').val(currentCode.content || '');
+      $('#job-code-current')
+        .text('Current: ' + (currentCode.filename || 'code file') + ' v' + currentCode.version)
+        .show();
+      job_code_source = 'paste';
+      setCodeStatus('Current code loaded. Saving changes creates a new version.', false);
+      setCodeEditorBusy(false);
+      job_string();
+    })
+    .fail(function(xhr) {
+      if (generation !== codeLoadGeneration) return;
+      var message = xhr.responseJSON && xhr.responseJSON.message;
+      setCodeStatus(
+        (message ? message + '. ' : 'Could not load current code. ') +
+          'Close this job and try again.',
+        true
+      );
+    });
 }
 
 function loadCodeFile(input) {
@@ -312,7 +350,28 @@ function handleSaveFailure(xhr) {
     setTimeout(function() { location.reload(); }, 1500);
     return;
   }
-  errorMessageBox(xhr.statusText || 'request failed');
+  errorMessageBox(
+    (xhr.responseJSON && xhr.responseJSON.message) || xhr.statusText || 'request failed'
+  );
+}
+
+function saveJobFromModal(_id, saveBtn) {
+  if (!schedule) schedule = '* * * * *';
+  var originalLabel = saveBtn.innerHTML;
+  saveBtn.setAttribute('disabled', 'disabled');
+  saveBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status"></span> Saving...';
+  $('#job-test-run').prop('disabled', true);
+
+  $.post(routes.save, savePayload(_id))
+    .done(function() {
+      location.reload();
+    })
+    .fail(function(xhr) {
+      handleSaveFailure(xhr);
+      saveBtn.removeAttribute('disabled');
+      saveBtn.innerHTML = originalLabel;
+      $('#job-test-run').prop('disabled', false);
+    });
 }
 
 function editJob(_id) {
@@ -363,12 +422,9 @@ function editJob(_id) {
   var newSaveBtn = saveBtn.cloneNode(true);
   saveBtn.parentNode.replaceChild(newSaveBtn, saveBtn);
   newSaveBtn.addEventListener('click', function() {
-    if (!schedule) schedule = '* * * * *';
-    $.post(routes.save, savePayload(_id), function() {
-      location.reload();
-    }).fail(handleSaveFailure);
-    getModal('job').hide();
+    saveJobFromModal(_id, newSaveBtn);
   });
+  if (job && job.commandMode === 'code') loadCurrentCode(_id);
 }
 
 function newJob() {
@@ -396,11 +452,7 @@ function newJob() {
   var newSaveBtn = saveBtn.cloneNode(true);
   saveBtn.parentNode.replaceChild(newSaveBtn, saveBtn);
   newSaveBtn.addEventListener('click', function() {
-    if (!schedule) schedule = '* * * * *';
-    $.post(routes.save, savePayload(-1), function() {
-      location.reload();
-    }).fail(handleSaveFailure);
-    getModal('job').hide();
+    saveJobFromModal(-1, newSaveBtn);
   });
 }
 

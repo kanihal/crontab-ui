@@ -30,6 +30,27 @@ function findJobByName(name) {
   });
 }
 
+function codeEditPayload(job, overrides = {}) {
+  const currentUpload = job.codeUploads.find(
+    (upload) => upload.id === job.currentCodeUploadId
+  ) || job.codeUploads[job.codeUploads.length - 1];
+  return {
+    _id: job._id,
+    version: job.version,
+    name: job.name,
+    commandMode: 'code',
+    command: job.command,
+    codeFilename: currentUpload.filename,
+    codeContent: currentUpload.content,
+    codeSource: 'paste',
+    schedule: job.schedule,
+    logging: job.logging,
+    mailing: job.mailing,
+    envVars: job.envVars,
+    ...overrides,
+  };
+}
+
 describe('Crontab UI', () => {
   afterAll(() => {
     fs.rmSync(testDbPath, { recursive: true, force: true });
@@ -188,33 +209,136 @@ describe('Crontab UI', () => {
       expect(oversized.status).toBe(400);
     });
 
-    it('should append a new active version when editing a code job', async () => {
+    it('should return the current file without rendering code in the main page', async () => {
+      const job = await findJobByName('pasted-code-job');
+      const res = await request(app).get('/code_content').query({ _id: job._id });
+      expect(res.status).toBe(200);
+      expect(res.headers['cache-control']).toBe('no-store');
+      expect(res.body).toEqual({
+        filename: 'paste.sh',
+        version: 1,
+        content: 'echo pasted-page-secret\n',
+      });
+
+      const page = await request(app).get('/');
+      expect(page.text).not.toContain('pasted-page-secret');
+    });
+
+    it('should reject invalid code-content requests', async () => {
+      const commandJob = await findJobByName('test-job');
+      const missing = await request(app).get('/code_content');
+      const unsafe = await request(app).get('/code_content').query({ _id: '../unsafe' });
+      const unknown = await request(app).get('/code_content').query({ _id: 'unknown-job' });
+      const command = await request(app).get('/code_content').query({ _id: commandJob._id });
+
+      expect(missing.status).toBe(400);
+      expect(missing.body.message).toBe('Invalid job id');
+      expect(unsafe.status).toBe(400);
+      expect(unknown.status).toBe(404);
+      expect(command.status).toBe(400);
+      expect(command.body.message).toBe('Job does not use managed code');
+    });
+
+    it('should rematerialize a missing current file before returning it', async () => {
+      const job = await findJobByName('pasted-code-job');
+      const upload = job.codeUploads[0];
+      const filePath = path.join(
+        testDbPath, 'code_uploads', 'jobs', job._id, 'versions', '1', upload.filename
+      );
+      fs.unlinkSync(filePath);
+
+      const res = await request(app).get('/code_content').query({ _id: job._id });
+      expect(res.status).toBe(200);
+      expect(res.body.content).toBe(upload.content);
+      expect(fs.readFileSync(filePath, 'utf8')).toBe(upload.content);
+    });
+
+    it('should keep the current code version when filename and content are unchanged', async () => {
       const before = await findJobByName('pasted-code-job');
       expect(before.codeUploads).toHaveLength(1);
+      const currentId = before.currentCodeUploadId;
+      const currentCommand = before.command;
 
       const res = await request(app)
         .post('/save')
-        .send({
-          _id: before._id,
-          version: before.version,
-          name: before.name,
-          commandMode: 'code',
-          command: before.command,
-          codeFilename: 'paste.py',
-          codeContent: 'print("pasted-v2-secret")\n',
-          codeSource: 'paste',
-          schedule: before.schedule,
-          logging: before.logging,
-          mailing: before.mailing,
-          envVars: before.envVars,
-        });
+        .send(codeEditPayload(before));
+      expect(res.status).toBe(200);
+
+      const after = await findJobByName('pasted-code-job');
+      expect(after.codeUploads).toHaveLength(1);
+      expect(after.currentCodeUploadId).toBe(currentId);
+      expect(after.codeUploads[0].version).toBe(1);
+      expect(after.command).toBe(currentCommand);
+    });
+
+    it('should append a new active version when code content changes', async () => {
+      const before = await findJobByName('pasted-code-job');
+      const oldFile = path.join(
+        testDbPath, 'code_uploads', 'jobs', before._id, 'versions', '1', 'paste.sh'
+      );
+      const res = await request(app)
+        .post('/save')
+        .send(codeEditPayload(before, { codeContent: 'echo pasted-v2-secret\n' }));
       expect(res.status).toBe(200);
 
       const after = await findJobByName('pasted-code-job');
       expect(after.codeUploads).toHaveLength(2);
       expect(after.currentCodeUploadId).toBe(after.codeUploads[1].id);
+      expect(after.codeUploads[1].version).toBe(2);
+      expect(after.command).toContain('/versions/2/paste.sh');
+      expect(fs.readFileSync(oldFile, 'utf8')).toBe('echo pasted-page-secret\n');
+    });
+
+    it('should append a new version and update the runner when only the filename changes', async () => {
+      const before = await findJobByName('pasted-code-job');
+      const res = await request(app)
+        .post('/save')
+        .send(codeEditPayload(before, { codeFilename: 'paste.py' }));
+      expect(res.status).toBe(200);
+
+      const after = await findJobByName('pasted-code-job');
+      expect(after.codeUploads).toHaveLength(3);
+      expect(after.codeUploads[2].version).toBe(3);
       expect(after.command).toContain('python3');
       expect(after.command).toContain('paste.py');
+    });
+
+    it('should reject empty or oversized code edits without changing the active version', async () => {
+      const before = await findJobByName('pasted-code-job');
+      const empty = await request(app)
+        .post('/save')
+        .send(codeEditPayload(before, { codeContent: '' }));
+      const oversized = await request(app)
+        .post('/save')
+        .send(codeEditPayload(before, { codeContent: 'x'.repeat(1024 * 1024 + 1) }));
+
+      expect(empty.status).toBe(400);
+      expect(empty.body.message).toBe('Code content is required');
+      expect(oversized.status).toBe(400);
+      expect(oversized.body.message).toBe('Code content must be 1 MiB or smaller');
+
+      const after = await findJobByName('pasted-code-job');
+      expect(after.codeUploads).toHaveLength(3);
+      expect(after.currentCodeUploadId).toBe(before.currentCodeUploadId);
+    });
+
+    it('should return a controlled error when the managed file is unreadable', async () => {
+      const job = await findJobByName('pasted-code-job');
+      const upload = job.codeUploads[2];
+      const filePath = path.join(
+        testDbPath, 'code_uploads', 'jobs', job._id, 'versions', '3', upload.filename
+      );
+      fs.unlinkSync(filePath);
+      fs.mkdirSync(filePath);
+
+      const failed = await request(app).get('/code_content').query({ _id: job._id });
+      expect(failed.status).toBe(500);
+      expect(failed.body.message).toBe('Unable to read managed code file');
+
+      fs.rmSync(filePath, { recursive: true, force: true });
+      const recovered = await request(app).get('/code_content').query({ _id: job._id });
+      expect(recovered.status).toBe(200);
+      expect(recovered.body.content).toBe(upload.content);
     });
 
     it('should preview generated runner commands and not render script content on the page', async () => {
@@ -500,12 +624,14 @@ describe('Routes module', () => {
     const { routes, base_url } = require('../routes');
     expect(routes.root).toBe(base_url + '/');
     expect(routes.save).toBe(base_url + '/save');
+    expect(routes.code_content).toBe(base_url + '/code_content');
     expect(routes.backup).toBe(base_url + '/backup');
   });
 
   it('should export relative routes', () => {
     const { relative } = require('../routes');
     expect(relative.save).toBe('save');
+    expect(relative.code_content).toBe('code_content');
     expect(relative.backup).toBe('backup');
   });
 });

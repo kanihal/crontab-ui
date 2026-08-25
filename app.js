@@ -102,6 +102,21 @@ app.get(routes.root, (req, res) => {
   });
 });
 
+app.get(routes.code_content, (req, res, next) => {
+  crontab.get_current_code(req.query._id, (err, currentCode) => {
+    if (err && err.status && err.status < 500) {
+      return res.status(err.status).json({ message: err.message || 'Request failed' });
+    }
+    if (err) {
+      const wrapped = new Error(err.message || 'Unable to read managed code file');
+      wrapped.statusCode = err.status || 500;
+      wrapped.cause = err.err;
+      return next(wrapped);
+    }
+    res.set('Cache-Control', 'no-store').json(currentCode);
+  });
+});
+
 app.post(routes.save, (req, res, next) => {
   const afterDb = (err) => {
     if (err && err.status === 409) {
