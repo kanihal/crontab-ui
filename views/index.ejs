@@ -60,7 +60,7 @@
 		<div class="d-flex flex-wrap align-items-center gap-2">
 			<span class="test-run-indicator" id="test-run-banner-indicator"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span></span>
 			<div class="flex-grow-1">
-				<strong>Test Run</strong>
+				<strong id="test-run-banner-title">Test Run</strong>
 				<span id="test-run-banner-status">Starting…</span>
 				<span class="text-muted ms-1" id="test-run-banner-elapsed"></span>
 			</div>
@@ -84,11 +84,11 @@
 </thead>
 <tbody>
 	<% var index = 1 %>
-	<% JSON.parse(crontabs).forEach(function(crontab){ %>
-		<% if (!crontab.stopped) { %>
-			<tr>
-		<% } else { %>
-			<tr class="table-primary">
+		<% JSON.parse(crontabs).forEach(function(crontab){ %>
+			<% if (!crontab.stopped) { %>
+				<tr data-job-id="<%= crontab._id %>">
+			<% } else { %>
+				<tr class="table-primary" data-job-id="<%= crontab._id %>">
 		<% } %>
 				<td class="col-num">
 					<%= index %>
@@ -99,10 +99,14 @@
 					<% if (crontab.name) { %>
 						<%= crontab.name %>
 						<a class="btn btn-sm" data-bs-toggle="tooltip" data-bs-placement="right" title="<%= crontab._id %>"><i class="bi bi-info-circle"></i></a>
-					<% } else { %>
-						<%= crontab._id %>
-					<% } %>
-				</td>
+						<% } else { %>
+							<%= crontab._id %>
+						<% } %>
+						<span class="job-test-run-indicator d-none ms-1 text-info" title="Test run in progress">
+							<span class="spinner-border spinner-border-sm" aria-hidden="true"></span>
+							<span class="visually-hidden">Test run in progress</span>
+						</span>
+					</td>
 				<td><%= crontab.command %></td>
 				<td>
 					<span style="cursor:pointer" data-bs-toggle="tooltip" data-bs-placement="bottom" title="<%= crontab.next %>">
@@ -120,12 +124,18 @@
 		<% } else { %>
 					<a class="btn btn-sm btn-link toggle-btn toggle-off" data-bs-toggle="tooltip" data-bs-placement="top" title="Enable" onclick="startJob('<%= crontab._id %>', this)"><i class="bi bi-toggle-off"></i></a>
 		<% } %>
-					<a class="btn btn-sm btn-outline-success action-btn" data-bs-toggle="tooltip" data-bs-placement="top" title="Run now" onclick="runJob('<%= crontab._id %>')"><i class="bi bi-play-fill"></i></a>
+					<button type="button" class="btn btn-sm btn-outline-success action-btn job-run-now" data-job-id="<%= crontab._id %>" data-bs-toggle="tooltip" data-bs-placement="top" title="Run now" onclick="runJob('<%= crontab._id %>', this)"><i class="bi bi-play-fill"></i><span class="visually-hidden">Run now</span></button>
 					<a class="btn btn-sm btn-outline-primary action-btn" data-bs-toggle="tooltip" data-bs-placement="top" title="Edit" onclick="editJob('<%= crontab._id %>')"><i class="bi bi-pencil-square"></i></a>
+					<div class="btn-group btn-group-sm log-action-group" role="group" aria-label="Job logs">
 		<% if (crontab.logging && crontab.logging != "false") { %>
-					<a class="btn btn-sm btn-outline-danger action-btn" data-bs-toggle="tooltip" data-bs-placement="top" title="stderr log" href="<%= JSON.parse(routes).logger + '?id=' + crontab._id %>" target="_blank"><i class="bi bi-journal-x"></i></a>
-					<a class="btn btn-sm btn-outline-primary action-btn" data-bs-toggle="tooltip" data-bs-placement="top" title="stdout log" href="<%= JSON.parse(routes).stdout + '?id=' + crontab._id %>" target="_blank"><i class="bi bi-journal-text"></i></a>
+						<a class="btn btn-outline-danger log-stderr" data-bs-toggle="tooltip" data-bs-placement="top" title="Error log (stderr)" href="<%= JSON.parse(routes).logger + '?id=' + crontab._id %>" target="_blank" rel="noopener"><i class="bi bi-exclamation-octagon"></i><span class="visually-hidden">Error log</span></a>
+						<a class="btn btn-outline-info log-stdout" data-bs-toggle="tooltip" data-bs-placement="top" title="Output log (stdout)" href="<%= JSON.parse(routes).stdout + '?id=' + crontab._id %>" target="_blank" rel="noopener"><i class="bi bi-terminal"></i><span class="visually-hidden">Output log</span></a>
+		<% } else { %>
+						<button type="button" class="btn btn-outline-danger" data-bs-toggle="tooltip" data-bs-placement="top" title="Error log (stderr) unavailable — enable error logging" disabled><i class="bi bi-exclamation-octagon"></i><span class="visually-hidden">Error log unavailable</span></button>
+						<button type="button" class="btn btn-outline-info" data-bs-toggle="tooltip" data-bs-placement="top" title="Output log (stdout) unavailable — enable error logging" disabled><i class="bi bi-terminal"></i><span class="visually-hidden">Output log unavailable</span></button>
 		<% } %>
+						<button type="button" class="btn btn-outline-warning job-last-test-run" data-bs-toggle="tooltip" data-bs-placement="top" data-last-test-run-id="<%= crontab.lastTestRun ? crontab.lastTestRun.id : '' %>" title="<%= crontab.lastTestRun ? 'Last test run' : 'No test run yet' %>" onclick="viewLastTestRun('<%= crontab._id %>', this)" <% if (!crontab.lastTestRun) { %>disabled<% } %>><i class="bi bi-clock-history"></i><span class="visually-hidden">Last test run</span></button>
+					</div>
 					<a class="btn btn-sm btn-outline-secondary action-btn" data-bs-toggle="tooltip" data-bs-placement="top" title="Duplicate" onclick="duplicateJob('<%= crontab._id %>')"><i class="bi bi-copy"></i></a>
 					<a class="btn btn-sm btn-outline-danger action-btn" data-bs-toggle="tooltip" data-bs-placement="top" title="Delete" onclick="deleteJob('<%= crontab._id %>')"><i class="bi bi-trash"></i></a>
 				</td>

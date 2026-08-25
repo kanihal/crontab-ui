@@ -168,9 +168,11 @@ app.post(routes.remove, (req, res, next) => {
   });
 });
 
-app.post(routes.run, (req, res) => {
-  crontab.runjob(req.body._id);
-  res.end();
+app.post(routes.run, (req, res, next) => {
+  crontab.runjob(req.body._id, (err, result) => {
+    if (err) return handleTestRunError(err, res, next);
+    return res.set('Cache-Control', 'no-store').status(202).json(result);
+  });
 });
 
 function handleTestRunError(err, res, next) {
@@ -188,6 +190,13 @@ app.get(`${routes.test_run}/active`, (_req, res) => {
   res.set('Cache-Control', 'no-store');
   if (!activeRun) return res.status(204).end();
   return res.json(activeRun);
+});
+
+app.get(`${routes.test_run}/job/:jobId/latest`, (req, res, next) => {
+  crontab.get_latest_test_run(req.params.jobId, (err, result) => {
+    if (err) return handleTestRunError(err, res, next);
+    return res.set('Cache-Control', 'no-store').json(result);
+  });
 });
 
 app.get(`${routes.test_run}/:id`, (req, res, next) => {

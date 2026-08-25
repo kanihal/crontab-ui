@@ -219,6 +219,27 @@ body > .app-container {
   vertical-align: -0.125em;
 }
 
+#main_table td.nowrap-actions .log-action-group {
+  margin: 0 0.3rem 0 0.15rem;
+  vertical-align: middle;
+}
+
+#main_table td.nowrap-actions .log-action-group .btn {
+  margin-right: 0;
+}
+
+#main_table td.nowrap-actions .log-action-group .log-stderr {
+  --bs-btn-hover-color: #fff;
+}
+
+#main_table td.nowrap-actions .log-action-group .log-stdout {
+  --bs-btn-color: var(--bs-info);
+}
+
+#main_table td.nowrap-actions .log-action-group .job-last-test-run:not(:disabled) {
+  --bs-btn-color: var(--bs-warning);
+}
+
 #main_table td.nowrap-actions .toggle-btn {
   text-decoration: none;
   background: transparent;
@@ -274,6 +295,27 @@ div.dataTables_wrapper div.dataTables_filter label {
   background-color: var(--app-table-hover);
 }
 
+#main_table tbody tr.test-run-active-row > * {
+  background-color: rgba(var(--bs-info-rgb), 0.055) !important;
+  opacity: 1 !important;
+}
+
+#main_table tbody tr.test-run-active-row > *:first-child {
+  box-shadow: inset 3px 0 0 var(--bs-info);
+}
+
+.job-test-run-indicator {
+  display: inline-flex;
+  vertical-align: middle;
+  align-items: center;
+}
+
+.job-test-run-indicator .spinner-border {
+  width: 0.85rem;
+  height: 0.85rem;
+  border-width: 0.13em;
+}
+
 #main_table td:nth-child(3) {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 0.85rem;
@@ -297,6 +339,15 @@ div.dataTables_wrapper div.dataTables_filter label {
 #main_table tbody tr.table-primary:hover > * {
   background-color: var(--app-table-hover) !important;
   opacity: 0.85;
+}
+
+#main_table tbody tr.table-primary.test-run-active-row,
+#main_table tbody tr.table-primary.test-run-active-row > * {
+  opacity: 1 !important;
+}
+
+#main_table tbody tr.table-primary.test-run-active-row > * {
+  background-color: rgba(var(--bs-info-rgb), 0.055) !important;
 }
 
 .nowrap-actions {

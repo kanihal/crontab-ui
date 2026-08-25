@@ -387,25 +387,39 @@ describe('Crontab UI', () => {
 
   describe('Asynchronous test runs', () => {
     it('should return immediately, stream output, and preserve the real exit code', async () => {
+      const job = await findJobByName('test-job');
       const started = Date.now();
       const response = await request(app)
         .post('/test_run')
-        .send({ command: "printf 'first\\n'; sleep 0.2; printf 'second\\n'; printf 'warning\\n' >&2; exit 7" });
+        .send({
+          jobId: job._id,
+          command: "printf 'first\\n'; sleep 0.2; printf 'second\\n'; printf 'warning\\n' >&2; exit 7",
+        });
 
       expect(response.status).toBe(202);
       expect(Date.now() - started).toBeLessThan(150);
       expect(response.body.status).toBe('running');
       expect(response.body.id).toMatch(/^[0-9a-f-]{36}$/);
+      expect(response.body.jobId).toBe(job._id);
+      expect(response.body.runType).toBe('test');
 
       const active = await request(app).get('/test_run/active');
       expect(active.status).toBe(200);
       expect(active.body.id).toBe(response.body.id);
+      expect(active.body.jobId).toBe(job._id);
 
       const result = await collectTestRun(response.body.id);
       expect(result.status).toBe('completed');
+      expect(result.jobId).toBe(job._id);
       expect(result.exitCode).toBe(7);
       expect(result.stdout).toBe('first\nsecond\n');
       expect(result.stderr).toBe('warning\n');
+
+      const latest = await request(app).get(`/test_run/job/${job._id}/latest`);
+      expect(latest.status).toBe(200);
+      expect(latest.body.id).toBe(response.body.id);
+      expect(latest.body.stdout).toBe('first\nsecond\n');
+      expect(latest.body.stderr).toBe('warning\n');
     });
 
     it('should enforce one active run and stop the full run on request', async () => {
@@ -419,6 +433,11 @@ describe('Crontab UI', () => {
         .send({ command: 'echo should-not-run' });
       expect(conflict.status).toBe(409);
       expect(conflict.body.activeRun.id).toBe(running.body.id);
+
+      const savedJob = await findJobByName('test-job');
+      const runNowConflict = await request(app).post('/runjob').send({ _id: savedJob._id });
+      expect(runNowConflict.status).toBe(409);
+      expect(runNowConflict.body.activeRun.id).toBe(running.body.id);
 
       const stopping = await request(app).delete(`/test_run/${running.body.id}`);
       expect(stopping.status).toBe(202);
@@ -484,6 +503,60 @@ describe('Crontab UI', () => {
         .query({ stdoutOffset: -1 });
       expect(invalidOffset.status).toBe(400);
       await collectTestRun(response.body.id);
+
+      const invalidJobId = await request(app).get('/test_run/job/unsafe-job!/latest');
+      expect(invalidJobId.status).toBe(400);
+      expect(invalidJobId.body.message).toBe('Invalid job id');
+
+      const missingLatest = await request(app).get('/test_run/job/unknown-job/latest');
+      expect(missingLatest.status).toBe(404);
+      expect(missingLatest.body.message).toBe('No test run found for this job');
+
+      const invalidRunNow = await request(app).post('/runjob').send({ _id: '../unsafe' });
+      expect(invalidRunNow.status).toBe(400);
+      expect(invalidRunNow.body.message).toBe('Invalid job id');
+    });
+
+    it('should run saved jobs asynchronously and share the one-active-run lock', async () => {
+      const create = await request(app)
+        .post('/save')
+        .send({
+          _id: -1,
+          name: 'long-run-now-job',
+          command: "printf 'run-now-start\\n'; sleep 0.3; printf 'run-now-finish\\n'; exit 7",
+          schedule: '* * * * *',
+          logging: 'false',
+          mailing: {},
+        });
+      expect(create.status).toBe(200);
+      const job = await findJobByName('long-run-now-job');
+
+      const response = await request(app).post('/runjob').send({ _id: job._id });
+      expect(response.status).toBe(202);
+      expect(response.body.jobId).toBe(job._id);
+      expect(response.body.runType).toBe('run-now');
+      expect(response.body.status).toBe('running');
+
+      const testConflict = await request(app)
+        .post('/test_run')
+        .send({ command: 'echo should-not-run' });
+      expect(testConflict.status).toBe(409);
+      expect(testConflict.body.activeRun.id).toBe(response.body.id);
+
+      const otherJob = await findJobByName('test-job');
+      const runNowConflict = await request(app).post('/runjob').send({ _id: otherJob._id });
+      expect(runNowConflict.status).toBe(409);
+      expect(runNowConflict.body.activeRun.id).toBe(response.body.id);
+
+      const result = await collectTestRun(response.body.id);
+      expect(result.runType).toBe('run-now');
+      expect(result.status).toBe('completed');
+      expect(result.exitCode).toBe(7);
+      expect(result.stdout).toContain('run-now-start\n');
+      expect(result.stdout).toContain('run-now-finish\n');
+
+      const noTestHistory = await request(app).get(`/test_run/job/${job._id}/latest`);
+      expect(noTestHistory.status).toBe(404);
     });
 
     it('should render refresh-safe test-run controls on the main page', async () => {
@@ -492,6 +565,16 @@ describe('Crontab UI', () => {
       expect(page.text).toContain('id="test-run-banner"');
       expect(page.text).toContain('id="test-run-result-modal"');
       expect(page.text).toContain('initializeTestRuns();');
+      expect(page.text).toContain('data-job-id=');
+      expect(page.text).toContain('job-test-run-indicator');
+      expect(page.text).toContain('job-run-now');
+      expect(page.text).toContain('id="test-run-banner-title"');
+      expect(page.text).toContain('log-action-group');
+      expect(page.text).toContain('Error log (stderr)');
+      expect(page.text).toContain('Output log (stdout)');
+      expect(page.text).toContain('job-last-test-run');
+      expect(page.text).toContain('Last test run');
+      expect(page.text).toMatch(/data-last-test-run-id="[0-9a-f-]{36}"/);
     });
   });
 

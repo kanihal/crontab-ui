@@ -250,6 +250,7 @@ function redactedCodeUpload(upload) {
 
 function publicCrontab(doc) {
   const copy = { ...doc };
+  copy.lastTestRun = testRunManager.getLatestForJob(copy._id);
   if (copy.commandMode === 'code') {
     const upload = currentCodeUpload(copy);
     if (upload) {
@@ -278,7 +279,7 @@ function buildCrontab(name, command, schedule, stopped, logging, mailing, envVar
   };
 }
 
-function makeCommand(tab) {
+function makeCommand(tab, preserveExitCode) {
   const stderr = path.join(cronPath, `${tab._id}.stderr`);
   const stdout = path.join(cronPath, `${tab._id}.stdout`);
   const logFile = path.join(logFolder, `${tab._id}.log`);
@@ -292,6 +293,7 @@ function makeCommand(tab) {
   let result = `({ ${cmd} } | tee ${stdout})`;
   result = `(${result} 3>&1 1>&2 2>&3 | tee ${stderr}) 3>&1 1>&2 2>&3`;
   result = `(${result})`;
+  if (preserveExitCode) result += '; crontab_ui_job_status=$?';
 
   if (tab.logging && tab.logging === 'true') {
     result += `; if test -f ${stderr}; then date >> "${logFile}"; cat ${stderr} >> "${logFile}"; fi`;
@@ -306,6 +308,10 @@ function makeCommand(tab) {
     result += `; /usr/local/bin/node ${__dirname}/bin/crontab-ui-mailer.js ${tab._id} ${stdout} ${stderr}`;
   }
 
+  if (preserveExitCode) {
+    result += '; exit "$crontab_ui_job_status"';
+    return `bash -o pipefail -c ${shellQuote(result)}`;
+  }
   return result;
 }
 
@@ -560,24 +566,6 @@ exports.get_crontab = (_id, callback) => {
   });
 };
 
-exports.runjob = (_id) => {
-  db.find({ _id }).exec((err, docs) => {
-    if (err || !docs.length) return;
-    const res = docs[0];
-    let cmd = makeCommand(res);
-    cmd = addEnvVars(res.envVars, cmd);
-
-    console.log('Running job');
-    console.log(`ID: ${_id}`);
-    console.log(`Original command: ${res.command}`);
-    console.log(`Executed command: ${cmd}`);
-
-    exec(cmd, (error) => {
-      if (error) console.log(error);
-    });
-  });
-};
-
 function testRunCommandFromData(data) {
   if (data.commandMode === 'code' && hasSubmittedCode(data)) {
     const upload = buildCodeUpload(data, 1);
@@ -598,16 +586,67 @@ const testRunManager = createTestRunManager({
   folder: path.join(dbFolder, 'test-runs'),
   prepare(data) {
     const prepared = testRunCommandFromData(data || {});
+    const jobId = data && data.jobId ? sanitizeCodeJobId(String(data.jobId)) : null;
     return {
       command: addEnvVars(data && data.envVars, prepared.command),
       cleanup: prepared.cleanup,
+      jobId,
+      runType: data && data.runType === 'run-now' ? 'run-now' : 'test',
     };
   },
 });
 
-exports.test_run = testRunManager.start;
+exports.runjob = (_id, callback) => {
+  let jobId;
+  try {
+    jobId = sanitizeCodeJobId(_id);
+  } catch (error) {
+    callback(error);
+    return;
+  }
+  db.findOne({ _id: jobId }, (err, job) => {
+    if (err) return callback(requestError(500, 'Unable to load job', err));
+    if (!job) return callback(requestError(404, 'Job not found'));
+
+    const command = makeCommand(job, true);
+    return testRunManager.start({
+      command,
+      envVars: job.envVars,
+      jobId,
+      runType: 'run-now',
+    }, (startError, result) => {
+      if (!startError) {
+        console.log('Running job');
+        console.log(`ID: ${jobId}`);
+        console.log(`Original command: ${job.command}`);
+        console.log(`Executed command: ${addEnvVars(job.envVars, command)}`);
+      }
+      callback(startError, result);
+    });
+  });
+};
+
+exports.test_run = (data, callback) => testRunManager.start({
+  ...(data || {}),
+  runType: 'test',
+}, callback);
 exports.get_test_run = testRunManager.get;
 exports.get_active_test_run = testRunManager.getActive;
+exports.get_latest_test_run = (_id, callback) => {
+  let jobId;
+  try {
+    jobId = sanitizeCodeJobId(_id);
+  } catch (error) {
+    callback(error);
+    return;
+  }
+  const latest = testRunManager.getLatestForJob(jobId);
+  if (!latest) {
+    callback(requestError(404, 'No test run found for this job'));
+    return;
+  }
+  testRunManager.get(latest.id, {}, callback);
+};
 exports.stop_test_run = testRunManager.stop;
 exports.shutdown_test_runs = testRunManager.shutdown;
 exports.test_runs_folder = testRunManager.folder;

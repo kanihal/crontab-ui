@@ -47,6 +47,8 @@ module.exports = function createTestRunManager({ folder, prepare }) {
   function serializableRun(run) {
     return {
       id: run.id,
+      jobId: run.jobId || null,
+      runType: run.runType || 'test',
       status: run.status,
       startedAt: run.startedAt,
       finishedAt: run.finishedAt || null,
@@ -245,6 +247,8 @@ module.exports = function createTestRunManager({ folder, prepare }) {
 
     const run = {
       id: crypto.randomUUID(),
+      jobId: prepared.jobId || null,
+      runType: prepared.runType === 'run-now' ? 'run-now' : 'test',
       status: 'running',
       startedAt: new Date().toISOString(),
       finishedAt: null,
@@ -356,6 +360,13 @@ module.exports = function createTestRunManager({ folder, prepare }) {
     return run && !isTerminal(run) ? summary(run) : null;
   }
 
+  function getLatestForJob(jobId) {
+    const latest = Array.from(runs.values())
+      .filter((run) => run.jobId === jobId && (run.runType || 'test') === 'test')
+      .sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt))[0];
+    return latest ? summary(latest) : null;
+  }
+
   function stop(id, callback) {
     try {
       validateRunId(id);
@@ -402,6 +413,7 @@ module.exports = function createTestRunManager({ folder, prepare }) {
     start,
     get,
     getActive,
+    getLatestForJob,
     stop,
     shutdown,
     folder,

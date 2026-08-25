@@ -119,6 +119,7 @@ var job_command_mode = 'command';
 var job_code_source = 'paste';
 var codeUploadLimit = 1024 * 1024;
 var codeLoadGeneration = 0;
+var currentEditingJobId = null;
 var jobTestRunId = null;
 var testRunPollTimer = null;
 var testRunPollInFlight = false;
@@ -172,11 +173,30 @@ function setJobEnabled(_id, enabled, btn) {
     });
 }
 
-function runJob(_id) {
+function runJob(_id, button) {
   messageBox('<p> Do you want to run this Job? </p>', 'Confirm run job', null, null, function() {
-    $.post(routes.run, {_id: _id}, function() {
-      location.reload();
-    });
+    if (button) button.setAttribute('disabled', 'disabled');
+    $('#job-test-run').prop('disabled', true);
+    renderTestRunRow({ jobId: _id, runType: 'run-now', status: 'running' });
+    $.post(routes.run, {_id: _id})
+      .done(function(result) {
+        attachTestRun(result);
+      })
+      .fail(function(xhr) {
+        if (xhr.status === 409 && xhr.responseJSON && xhr.responseJSON.activeRun) {
+          attachTestRun(xhr.responseJSON.activeRun);
+          return;
+        }
+        if (button) button.removeAttribute('disabled');
+        if (testRunState) renderTestRun();
+        else {
+          renderTestRunRow(null);
+          $('#job-test-run').prop('disabled', false);
+        }
+        errorMessageBox(
+          (xhr.responseJSON && xhr.responseJSON.message) || xhr.statusText || 'Unable to run the job'
+        );
+      });
   });
 }
 
@@ -212,7 +232,9 @@ function setCodeStatus(message, isError) {
 function setCodeEditorBusy(isBusy) {
   $('#job-code-filename, #job-code-file, #job-code-content').prop('disabled', isBusy);
   $('#job-mode-command, #job-mode-code').prop('disabled', isBusy);
-  $('#job-save, #job-test-run').prop('disabled', isBusy);
+  $('#job-save').prop('disabled', isBusy);
+  $('#job-test-run').prop('disabled', isBusy || !!(testRunState && !isTestRunTerminal(testRunState.status)));
+  if (!isBusy && testRunState) renderTestRun();
 }
 
 function clearCodeInputs() {
@@ -312,6 +334,10 @@ function testRunEndpoint(suffix) {
   return suffix ? base + '/' + encodeURIComponent(suffix) : base;
 }
 
+function latestTestRunEndpoint(jobId) {
+  return testRunEndpoint('job') + '/' + encodeURIComponent(jobId) + '/latest';
+}
+
 function isTestRunTerminal(status) {
   return ['completed', 'failed', 'stopped', 'interrupted'].indexOf(status) !== -1;
 }
@@ -372,6 +398,83 @@ function formatElapsed(run) {
   return seconds + 's';
 }
 
+function renderTestRunRow(run) {
+  var rows = document.querySelectorAll('#main_table tbody tr[data-job-id]');
+  var active = !!(run && !isTestRunTerminal(run.status));
+  var runNow = run && run.runType === 'run-now';
+  rows.forEach(function(row) {
+    var isRunJob = !!(run && run.jobId && row.getAttribute('data-job-id') === String(run.jobId));
+    var isRunningJob = !!(
+      isRunJob && !isTestRunTerminal(run.status)
+    );
+    row.classList.toggle('test-run-active-row', isRunningJob);
+    if (isRunningJob) row.setAttribute('aria-busy', 'true');
+    else row.removeAttribute('aria-busy');
+    var rowIndicator = row.querySelector('.job-test-run-indicator');
+    if (rowIndicator) {
+      rowIndicator.classList.toggle('d-none', !isRunningJob);
+      rowIndicator.setAttribute('title', runNow ? 'Run now in progress' : 'Test run in progress');
+      var hiddenLabel = rowIndicator.querySelector('.visually-hidden');
+      if (hiddenLabel) hiddenLabel.textContent = runNow ? 'Run now in progress' : 'Test run in progress';
+    }
+    var historyButton = row.querySelector('.job-last-test-run');
+    if (isRunJob && !runNow && run.id && historyButton) {
+      historyButton.removeAttribute('disabled');
+      historyButton.setAttribute('data-last-test-run-id', run.id);
+      updateTooltipTitle(historyButton, 'Last test run');
+    }
+  });
+  document.querySelectorAll('.job-run-now').forEach(function(button) {
+    var isOrigin = !!(runNow && run.jobId && button.getAttribute('data-job-id') === String(run.jobId));
+    button.disabled = active;
+    button.innerHTML = isOrigin && active
+      ? '<span class="spinner-border spinner-border-sm" aria-hidden="true"></span><span class="visually-hidden">Run now is running</span>'
+      : '<i class="bi bi-play-fill"></i><span class="visually-hidden">Run now</span>';
+    var title = !active ? 'Run now' :
+      isOrigin ? 'Run now is running' :
+      runNow ? 'Another job is running' : 'A test run is in progress';
+    updateTooltipTitle(button, title);
+  });
+}
+
+function updateTooltipTitle(element, title) {
+  if (!element || element.getAttribute('data-bs-original-title') === title) return;
+  element.setAttribute('title', title);
+  element.setAttribute('data-bs-original-title', title);
+  var tooltip = bootstrap.Tooltip.getInstance(element);
+  if (tooltip) { tooltip.hide(); tooltip.dispose(); }
+  new bootstrap.Tooltip(element);
+}
+
+function renderJobTestRunResult(run) {
+  if (!run) return;
+  var wrap = document.getElementById('job-test-result-wrap');
+  var pre = document.getElementById('job-test-result');
+  var status = document.getElementById('job-test-status');
+  var title = document.getElementById('job-test-result-title');
+  var label = testRunStatusLabel(run);
+  if (wrap) wrap.style.display = 'block';
+  if (pre) pre.textContent = testRunOutput(run);
+  if (status) status.textContent = label ? '(' + label + ')' : '';
+  if (title) title.textContent = run.runType === 'run-now' ? 'Run Now Result' : 'Test Run Result';
+}
+
+function scrollToJobTestRunResult() {
+  setTimeout(function() {
+    var body = document.getElementById('job-body');
+    var result = document.getElementById('job-test-result-wrap');
+    if (body && result) body.scrollTop = Math.max(0, result.offsetTop - body.offsetTop - 12);
+  }, 150);
+}
+
+function openJobWithTestRun(jobId, run) {
+  editJob(jobId);
+  jobTestRunId = run.id;
+  renderJobTestRunResult(run);
+  if (testRunState) renderTestRun();
+  scrollToJobTestRunResult();
+}
+
 function renderTestRun() {
   var run = testRunState;
   var banner = document.getElementById('test-run-banner');
@@ -380,11 +483,14 @@ function renderTestRun() {
   var terminal = isTestRunTerminal(run.status);
   var active = !terminal;
   var label = testRunStatusLabel(run);
+  renderTestRunRow(run);
   var bannerStatus = document.getElementById('test-run-banner-status');
   var bannerElapsed = document.getElementById('test-run-banner-elapsed');
   var bannerStop = document.getElementById('test-run-banner-stop');
   var bannerDismiss = document.getElementById('test-run-banner-dismiss');
   var indicator = document.getElementById('test-run-banner-indicator');
+  var bannerTitle = document.getElementById('test-run-banner-title');
+  var modalTitle = document.getElementById('test-run-modal-title');
 
   banner.classList.remove('d-none', 'alert-info', 'alert-success', 'alert-warning', 'alert-danger', 'alert-secondary');
   banner.classList.add(
@@ -394,6 +500,8 @@ function renderTestRun() {
     run.status === 'stopped' ? 'alert-secondary' : 'alert-info'
   );
   bannerStatus.textContent = label ? '(' + label + ')' : '';
+  if (bannerTitle) bannerTitle.textContent = run.runType === 'run-now' ? 'Run Now' : 'Test Run';
+  if (modalTitle) modalTitle.textContent = run.runType === 'run-now' ? 'Run Now Result' : 'Test Run Result';
   bannerElapsed.textContent = formatElapsed(run);
   bannerStop.classList.toggle('d-none', !active || run.status === 'stopping');
   bannerDismiss.classList.toggle('d-none', !terminal);
@@ -410,19 +518,21 @@ function renderTestRun() {
   if (modalStop) modalStop.classList.toggle('d-none', !active || run.status === 'stopping');
 
   if (jobTestRunId === run.id) {
-    var wrap = document.getElementById('job-test-result-wrap');
-    var pre = document.getElementById('job-test-result');
-    var status = document.getElementById('job-test-status');
-    if (wrap) wrap.style.display = 'block';
-    if (pre) pre.textContent = output;
-    if (status) status.textContent = label ? '(' + label + ')' : '';
+    renderJobTestRunResult(run);
   }
 
   var button = document.getElementById('job-test-run');
   if (button) {
     if (active) {
+      var isOriginatingJob = run.jobId
+        ? currentEditingJobId === run.jobId
+        : jobTestRunId === run.id;
       button.setAttribute('disabled', 'disabled');
-      button.innerHTML = '<span class="spinner-border spinner-border-sm" role="status"></span> Running...';
+      button.innerHTML = run.runType === 'run-now'
+        ? '<i class="bi bi-hourglass-split"></i> ' + (isOriginatingJob ? 'Run Now is running' : 'Another job is running')
+        : isOriginatingJob
+          ? '<span class="spinner-border spinner-border-sm" role="status"></span> Running...'
+          : '<i class="bi bi-hourglass-split"></i> Another test is running';
     } else {
       button.removeAttribute('disabled');
       button.innerHTML = '<i class="bi bi-play-circle"></i> Test Run';
@@ -444,6 +554,8 @@ function applyTestRunUpdate(result) {
     ? testRunState.stdoutOffset : result.nextStdoutOffset;
   testRunState.stderrOffset = result.nextStderrOffset == null
     ? testRunState.stderrOffset : result.nextStderrOffset;
+  testRunState.jobId = result.jobId || null;
+  testRunState.runType = result.runType || 'test';
   testRunState.status = result.status;
   testRunState.startedAt = result.startedAt;
   testRunState.finishedAt = result.finishedAt;
@@ -462,6 +574,8 @@ function attachTestRun(run) {
   if (testRunPollTimer) clearTimeout(testRunPollTimer);
   testRunState = {
     id: run.id,
+    jobId: run.jobId || null,
+    runType: run.runType || 'test',
     status: run.status || 'running',
     startedAt: run.startedAt,
     finishedAt: run.finishedAt || null,
@@ -506,6 +620,7 @@ function pollTestRun() {
       if (!testRunState || testRunState.id !== runId) return;
       if (xhr.status === 404 || xhr.status === 400) {
         rememberTestRunId(null);
+        renderTestRunRow(null);
         testRunState = null;
         var banner = document.getElementById('test-run-banner');
         if (banner) banner.classList.add('d-none');
@@ -533,8 +648,38 @@ function initializeTestRuns() {
 
 function viewTestRunResult() {
   if (!testRunState) return;
+  var matchingJob = null;
+  if (testRunState.jobId) {
+    crontabs.forEach(function(job) {
+      if (job._id === testRunState.jobId) matchingJob = job;
+    });
+  }
+  if (matchingJob) {
+    openJobWithTestRun(matchingJob._id, testRunState);
+    return;
+  }
   renderTestRun();
   getModal('test-run-result-modal').show();
+}
+
+function viewLastTestRun(jobId, button) {
+  if (button) button.setAttribute('disabled', 'disabled');
+  $.get(latestTestRunEndpoint(jobId))
+    .done(function(run) {
+      if (testRunState && run.id === testRunState.id) {
+        viewTestRunResult();
+        return;
+      }
+      openJobWithTestRun(jobId, run);
+    })
+    .fail(function(xhr) {
+      errorMessageBox(
+        (xhr.responseJSON && xhr.responseJSON.message) || xhr.statusText || 'Unable to load the last test run'
+      );
+    })
+    .always(function() {
+      if (button) button.removeAttribute('disabled');
+    });
 }
 
 function stopCurrentTestRun() {
@@ -555,6 +700,7 @@ function stopCurrentTestRun() {
 function dismissTestRun() {
   if (!testRunState || !isTestRunTerminal(testRunState.status)) return;
   rememberTestRunId(null);
+  renderTestRunRow(null);
   var banner = document.getElementById('test-run-banner');
   if (banner) banner.classList.add('d-none');
   testRunState = null;
@@ -565,6 +711,7 @@ function testRunJob() {
     ? codePayload()
     : { commandMode: job_command_mode, command: collapsedCommand() };
   payload.envVars = $('#job-env-vars').val();
+  if (currentEditingJobId) payload.jobId = currentEditingJobId;
   var command = payload.commandMode === 'code' && payload.codeContent
     ? payload.codeContent
     : payload.command;
@@ -581,6 +728,7 @@ function testRunJob() {
   wrap.style.display = 'block';
   status.textContent = '(starting)';
   pre.textContent = '(starting)';
+  renderTestRunRow({ jobId: currentEditingJobId, runType: 'test', status: 'running' });
   $.post(routes.test_run, payload)
     .done(function(result) {
       jobTestRunId = result.id;
@@ -594,6 +742,8 @@ function testRunJob() {
       }
       pre.textContent = (xhr.responseJSON && xhr.responseJSON.message) || xhr.statusText || 'request failed';
       status.textContent = '(error)';
+      if (testRunState) renderTestRun();
+      else renderTestRunRow(null);
       btn.removeAttribute('disabled');
       btn.innerHTML = '<i class="bi bi-play-circle"></i> Test Run';
     });
@@ -628,7 +778,8 @@ function saveJobFromModal(_id, saveBtn) {
       handleSaveFailure(xhr);
       saveBtn.removeAttribute('disabled');
       saveBtn.innerHTML = originalLabel;
-      $('#job-test-run').prop('disabled', false);
+      if (testRunState) renderTestRun();
+      else $('#job-test-run').prop('disabled', false);
     });
 }
 
@@ -638,6 +789,7 @@ function editJob(_id) {
     if (crontab._id === _id) job = crontab;
   });
 
+  currentEditingJobId = job ? job._id : null;
   resetTestResult();
   if (job) {
     getModal('job').show();
@@ -682,10 +834,12 @@ function editJob(_id) {
   newSaveBtn.addEventListener('click', function() {
     saveJobFromModal(_id, newSaveBtn);
   });
+  if (testRunState) renderTestRun();
   if (job && job.commandMode === 'code') loadCurrentCode(_id);
 }
 
 function newJob() {
+  currentEditingJobId = null;
   schedule = '';
   job_command = '';
   $('#job-minute').val('*');
@@ -712,6 +866,7 @@ function newJob() {
   newSaveBtn.addEventListener('click', function() {
     saveJobFromModal(-1, newSaveBtn);
   });
+  if (testRunState) renderTestRun();
 }
 
 function duplicateJob(_id) {

@@ -78,7 +78,7 @@
 	<div class="mb-2">
 		<button type="button" class="btn btn-outline-info btn-sm" id="job-test-run" onclick="testRunJob();"><i class="bi bi-play-circle"></i> Test Run</button>
 		<div class="mt-2" id="job-test-result-wrap" style="display:none;">
-			<label class="form-label small mb-1">Test Run Result <span class="text-muted" id="job-test-status"></span></label>
+			<label class="form-label small mb-1"><span id="job-test-result-title">Test Run Result</span> <span class="text-muted" id="job-test-status"></span></label>
 			<pre id="job-test-result" class="bg-dark text-light p-2 rounded small mb-0" style="white-space:pre-wrap;word-break:break-all;"></pre>
 		</div>
 	</div>
@@ -136,7 +136,7 @@
   <div class="modal-dialog modal-xl modal-dialog-scrollable">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title"><i class="bi bi-terminal"></i> Test Run Result <span class="text-muted small" id="test-run-modal-status"></span></h5>
+        <h5 class="modal-title"><i class="bi bi-terminal"></i> <span id="test-run-modal-title">Test Run Result</span> <span class="text-muted small" id="test-run-modal-status"></span></h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body">
