@@ -34,6 +34,7 @@
 		tooltipTriggerList.map(function (el) { return new bootstrap.Tooltip(el); });
 		crontabs = JSON.parse('<%- crontabs.replace(/\\\\/g, "\\\\\\\\").replace(/\\\"/g,"\\\\\"").replace(/\'/g,"\\\'").replace(/\\t/g, " ") %>');
 		routes = JSON.parse('<%- routes %>');
+		initializeTestRuns();
 	});
 </script>
 </head>
@@ -52,6 +53,20 @@
 				<a class="btn btn-outline-secondary" onclick="import_db()"><i class="bi bi-box-arrow-in-down"></i> Import</a>
 				<a class="btn btn-outline-secondary" href="<%= JSON.parse(routes).export %>"><i class="bi bi-box-arrow-up"></i> Export</a>
 			</div>
+		</div>
+	</div>
+
+	<div class="alert alert-info d-none test-run-banner" id="test-run-banner" role="status" aria-live="polite">
+		<div class="d-flex flex-wrap align-items-center gap-2">
+			<span class="test-run-indicator" id="test-run-banner-indicator"><span class="spinner-border spinner-border-sm" aria-hidden="true"></span></span>
+			<div class="flex-grow-1">
+				<strong>Test Run</strong>
+				<span id="test-run-banner-status">Starting…</span>
+				<span class="text-muted ms-1" id="test-run-banner-elapsed"></span>
+			</div>
+			<button type="button" class="btn btn-sm btn-outline-primary" onclick="viewTestRunResult();"><i class="bi bi-terminal"></i> View</button>
+			<button type="button" class="btn btn-sm btn-outline-danger" id="test-run-banner-stop" onclick="stopCurrentTestRun();"><i class="bi bi-stop-circle"></i> Stop</button>
+			<button type="button" class="btn-close d-none" id="test-run-banner-dismiss" aria-label="Dismiss" onclick="dismissTestRun();"></button>
 		</div>
 	</div>
 

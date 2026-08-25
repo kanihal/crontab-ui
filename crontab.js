@@ -7,6 +7,7 @@ const { exec } = require('child_process');
 const fs = require('fs');
 const { CronExpressionParser } = require('cron-parser');
 const cronstrue = require('cronstrue/i18n');
+const createTestRunManager = require('./test-runs');
 
 const humanCronLocale = process.env.HUMANCRON ?? 'en';
 
@@ -593,36 +594,23 @@ function testRunCommandFromData(data) {
   return { command: data.command || '', cleanup: null };
 }
 
-exports.test_run = (commandOrData, envVarsOrCallback, callback) => {
-  const dataMode = typeof commandOrData === 'object' && commandOrData !== null;
-  const envVars = dataMode ? commandOrData.envVars : envVarsOrCallback;
-  const cb = dataMode ? envVarsOrCallback : callback;
-  let prepared;
+const testRunManager = createTestRunManager({
+  folder: path.join(dbFolder, 'test-runs'),
+  prepare(data) {
+    const prepared = testRunCommandFromData(data || {});
+    return {
+      command: addEnvVars(data && data.envVars, prepared.command),
+      cleanup: prepared.cleanup,
+    };
+  },
+});
 
-  try {
-    prepared = dataMode
-      ? testRunCommandFromData(commandOrData)
-      : { command: commandOrData, cleanup: null };
-  } catch (e) {
-    return cb(e);
-  }
-
-  const command = prepared.command;
-  if (!command || !command.trim()) {
-    if (prepared.cleanup) prepared.cleanup();
-    return cb({ status: 400, message: 'Command is required' });
-  }
-  const wrapped = addEnvVars(envVars, command);
-  exec(wrapped, { timeout: 30000, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
-    if (prepared.cleanup) prepared.cleanup();
-    cb(null, {
-      stdout: stdout || '',
-      stderr: stderr || '',
-      exitCode: error ? (error.code != null ? error.code : 1) : 0,
-      timedOut: error && error.killed === true,
-    });
-  });
-};
+exports.test_run = testRunManager.start;
+exports.get_test_run = testRunManager.get;
+exports.get_active_test_run = testRunManager.getActive;
+exports.stop_test_run = testRunManager.stop;
+exports.shutdown_test_runs = testRunManager.shutdown;
+exports.test_runs_folder = testRunManager.folder;
 
 let deployInFlight = false;
 let pendingDeploy = null;

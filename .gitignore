@@ -3,6 +3,7 @@ node_modules
 crontabs/*.db
 crontabs/code_uploads/
 crontabs/logs/*.log
+crontabs/test-runs/
 dist/
 build/icon.icns
 build/icon.png

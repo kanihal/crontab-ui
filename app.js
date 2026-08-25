@@ -173,11 +173,41 @@ app.post(routes.run, (req, res) => {
   res.end();
 });
 
+function handleTestRunError(err, res, next) {
+  if (err && err.status >= 400 && err.status < 600) {
+    return res.status(err.status).json({
+      message: err.message || 'Request failed',
+      ...(err.activeRun ? { activeRun: err.activeRun } : {}),
+    });
+  }
+  return next((err && err.err) || err);
+}
+
+app.get(`${routes.test_run}/active`, (_req, res) => {
+  const activeRun = crontab.get_active_test_run();
+  res.set('Cache-Control', 'no-store');
+  if (!activeRun) return res.status(204).end();
+  return res.json(activeRun);
+});
+
+app.get(`${routes.test_run}/:id`, (req, res, next) => {
+  crontab.get_test_run(req.params.id, req.query, (err, result) => {
+    if (err) return handleTestRunError(err, res, next);
+    res.set('Cache-Control', 'no-store').json(result);
+  });
+});
+
+app.delete(`${routes.test_run}/:id`, (req, res, next) => {
+  crontab.stop_test_run(req.params.id, (err, result) => {
+    if (err) return handleTestRunError(err, res, next);
+    res.set('Cache-Control', 'no-store').status(202).json(result);
+  });
+});
+
 app.post(routes.test_run, (req, res, next) => {
   crontab.test_run(req.body, (err, result) => {
-    if (err && err.status === 400) return res.status(400).json(err);
-    if (err) return next(err);
-    res.json(result);
+    if (err) return handleTestRunError(err, res, next);
+    res.set('Cache-Control', 'no-store').status(202).json(result);
   });
 });
 
@@ -304,15 +334,16 @@ app.get(routes.stdout, validateIdParam, (req, res) => {
 // error handler
 app.use(errorHandler);
 
-process.on('SIGINT', () => {
+let shutdownStarted = false;
+function shutdown() {
+  if (shutdownStarted) return;
+  shutdownStarted = true;
   console.log('Exiting crontab-ui');
-  process.exit();
-});
+  crontab.shutdown_test_runs(() => process.exit());
+}
 
-process.on('SIGTERM', () => {
-  console.log('Exiting crontab-ui');
-  process.exit();
-});
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
 
 const server = startHttpsServer
   ? https.createServer(credentials, app)

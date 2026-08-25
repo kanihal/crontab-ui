@@ -389,9 +389,33 @@ div.dataTables_wrapper div.dataTables_filter label {
   border: 1px solid var(--app-card-border);
 }
 
+.test-run-banner {
+  border: 1px solid var(--app-card-border);
+  box-shadow: var(--app-card-shadow);
+}
+
+.test-run-banner .test-run-indicator {
+  display: inline-flex;
+  width: 1.25rem;
+  align-items: center;
+  justify-content: center;
+}
+
+.test-run-output {
+  min-height: 12rem;
+  max-height: 65vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
 /* In dark mode, .bg-dark blends with the modal body. Lift the background and
    keep a clear border so the test-run output reads as a distinct console. */
 [data-bs-theme="dark"] #job #job-test-result.bg-dark,
+[data-bs-theme="dark"] #test-run-modal-output.bg-dark,
 [data-bs-theme="dark"] #preview-crontab-content.bg-dark {
   background-color: #05070b !important;
   border: 1px solid #2f3848;

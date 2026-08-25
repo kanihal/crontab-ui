@@ -119,6 +119,11 @@ var job_command_mode = 'command';
 var job_code_source = 'paste';
 var codeUploadLimit = 1024 * 1024;
 var codeLoadGeneration = 0;
+var jobTestRunId = null;
+var testRunPollTimer = null;
+var testRunPollInFlight = false;
+var testRunState = null;
+var testRunStorageKey = 'crontab-ui-test-run-id';
 
 function deleteJob(_id) {
   messageBox('<p> Do you want to delete this Job? </p>', 'Confirm delete', null, null, function() {
@@ -302,6 +307,259 @@ function savePayload(_id) {
   return payload;
 }
 
+function testRunEndpoint(suffix) {
+  var base = String(routes.test_run || 'test_run').replace(/\/+$/, '');
+  return suffix ? base + '/' + encodeURIComponent(suffix) : base;
+}
+
+function isTestRunTerminal(status) {
+  return ['completed', 'failed', 'stopped', 'interrupted'].indexOf(status) !== -1;
+}
+
+function trackedTestRunId() {
+  try { return sessionStorage.getItem(testRunStorageKey); } catch (_e) { return null; }
+}
+
+function rememberTestRunId(id) {
+  try {
+    if (id) sessionStorage.setItem(testRunStorageKey, id);
+    else sessionStorage.removeItem(testRunStorageKey);
+  } catch (_e) {}
+}
+
+function testRunStatusLabel(run) {
+  if (!run) return '';
+  if (run.connectionLost) return 'reconnecting';
+  if (run.status === 'completed' && run.signal) return 'signal ' + run.signal;
+  if (run.status === 'completed') return 'exit code ' + (run.exitCode == null ? 'unknown' : run.exitCode);
+  if (run.status === 'failed') return 'error';
+  return run.status || 'unknown';
+}
+
+function testRunOutput(run) {
+  if (!run) return '(no output)';
+  var parts = [];
+  if (run.message) parts.push('--- status ---\n' + run.message);
+  if (run.stdout) {
+    var stdout = '--- stdout ---\n' + run.stdout;
+    if (run.stdoutTruncated) stdout += '\n\n[stdout truncated after 10 MiB]';
+    parts.push(stdout);
+  } else if (run.stdoutTruncated) {
+    parts.push('--- stdout ---\n[stdout truncated after 10 MiB]');
+  }
+  if (run.stderr) {
+    var stderr = '--- stderr ---\n' + run.stderr;
+    if (run.stderrTruncated) stderr += '\n\n[stderr truncated after 10 MiB]';
+    parts.push(stderr);
+  } else if (run.stderrTruncated) {
+    parts.push('--- stderr ---\n[stderr truncated after 10 MiB]');
+  }
+  if (!parts.length) parts.push(isTestRunTerminal(run.status) ? '(no output)' : '(running)');
+  return parts.join('\n\n');
+}
+
+function formatElapsed(run) {
+  if (!run || !run.startedAt) return '';
+  var start = new Date(run.startedAt).getTime();
+  var end = run.finishedAt ? new Date(run.finishedAt).getTime() : Date.now();
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return '';
+  var total = Math.max(0, Math.floor((end - start) / 1000));
+  var hours = Math.floor(total / 3600);
+  var minutes = Math.floor((total % 3600) / 60);
+  var seconds = total % 60;
+  if (hours) return hours + 'h ' + minutes + 'm ' + seconds + 's';
+  if (minutes) return minutes + 'm ' + seconds + 's';
+  return seconds + 's';
+}
+
+function renderTestRun() {
+  var run = testRunState;
+  var banner = document.getElementById('test-run-banner');
+  if (!run || !banner) return;
+
+  var terminal = isTestRunTerminal(run.status);
+  var active = !terminal;
+  var label = testRunStatusLabel(run);
+  var bannerStatus = document.getElementById('test-run-banner-status');
+  var bannerElapsed = document.getElementById('test-run-banner-elapsed');
+  var bannerStop = document.getElementById('test-run-banner-stop');
+  var bannerDismiss = document.getElementById('test-run-banner-dismiss');
+  var indicator = document.getElementById('test-run-banner-indicator');
+
+  banner.classList.remove('d-none', 'alert-info', 'alert-success', 'alert-warning', 'alert-danger', 'alert-secondary');
+  banner.classList.add(
+    run.connectionLost || run.status === 'stopping' || run.status === 'interrupted' ? 'alert-warning' :
+    run.status === 'failed' || (run.status === 'completed' && run.exitCode !== 0) ? 'alert-danger' :
+    run.status === 'completed' ? 'alert-success' :
+    run.status === 'stopped' ? 'alert-secondary' : 'alert-info'
+  );
+  bannerStatus.textContent = label ? '(' + label + ')' : '';
+  bannerElapsed.textContent = formatElapsed(run);
+  bannerStop.classList.toggle('d-none', !active || run.status === 'stopping');
+  bannerDismiss.classList.toggle('d-none', !terminal);
+  indicator.innerHTML = active
+    ? '<span class="spinner-border spinner-border-sm" aria-hidden="true"></span>'
+    : '<i class="bi ' + (run.status === 'completed' && run.exitCode === 0 ? 'bi-check-circle-fill' : 'bi-info-circle-fill') + '"></i>';
+
+  var output = testRunOutput(run);
+  var modalOutput = document.getElementById('test-run-modal-output');
+  var modalStatus = document.getElementById('test-run-modal-status');
+  var modalStop = document.getElementById('test-run-modal-stop');
+  if (modalOutput) modalOutput.textContent = output;
+  if (modalStatus) modalStatus.textContent = label ? '(' + label + ')' : '';
+  if (modalStop) modalStop.classList.toggle('d-none', !active || run.status === 'stopping');
+
+  if (jobTestRunId === run.id) {
+    var wrap = document.getElementById('job-test-result-wrap');
+    var pre = document.getElementById('job-test-result');
+    var status = document.getElementById('job-test-status');
+    if (wrap) wrap.style.display = 'block';
+    if (pre) pre.textContent = output;
+    if (status) status.textContent = label ? '(' + label + ')' : '';
+  }
+
+  var button = document.getElementById('job-test-run');
+  if (button) {
+    if (active) {
+      button.setAttribute('disabled', 'disabled');
+      button.innerHTML = '<span class="spinner-border spinner-border-sm" role="status"></span> Running...';
+    } else {
+      button.removeAttribute('disabled');
+      button.innerHTML = '<i class="bi bi-play-circle"></i> Test Run';
+    }
+  }
+}
+
+function scheduleTestRunPoll(delay) {
+  if (testRunPollTimer) clearTimeout(testRunPollTimer);
+  if (!testRunState || isTestRunTerminal(testRunState.status)) return;
+  testRunPollTimer = setTimeout(pollTestRun, delay == null ? 1000 : delay);
+}
+
+function applyTestRunUpdate(result) {
+  if (!testRunState || testRunState.id !== result.id) return;
+  testRunState.stdout += result.stdout || '';
+  testRunState.stderr += result.stderr || '';
+  testRunState.stdoutOffset = result.nextStdoutOffset == null
+    ? testRunState.stdoutOffset : result.nextStdoutOffset;
+  testRunState.stderrOffset = result.nextStderrOffset == null
+    ? testRunState.stderrOffset : result.nextStderrOffset;
+  testRunState.status = result.status;
+  testRunState.startedAt = result.startedAt;
+  testRunState.finishedAt = result.finishedAt;
+  testRunState.exitCode = result.exitCode;
+  testRunState.signal = result.signal;
+  testRunState.message = result.message || '';
+  testRunState.stdoutTruncated = !!result.stdoutTruncated;
+  testRunState.stderrTruncated = !!result.stderrTruncated;
+  testRunState.connectionLost = false;
+  testRunState.pollFailures = 0;
+  renderTestRun();
+}
+
+function attachTestRun(run) {
+  if (!run || !run.id) return;
+  if (testRunPollTimer) clearTimeout(testRunPollTimer);
+  testRunState = {
+    id: run.id,
+    status: run.status || 'running',
+    startedAt: run.startedAt,
+    finishedAt: run.finishedAt || null,
+    exitCode: run.exitCode == null ? null : run.exitCode,
+    signal: run.signal || null,
+    message: run.message || '',
+    stdout: '',
+    stderr: '',
+    stdoutOffset: 0,
+    stderrOffset: 0,
+    stdoutTruncated: !!run.stdoutTruncated,
+    stderrTruncated: !!run.stderrTruncated,
+    connectionLost: false,
+    pollFailures: 0,
+  };
+  rememberTestRunId(run.id);
+  renderTestRun();
+  pollTestRun();
+}
+
+function discoverActiveTestRun() {
+  $.get(testRunEndpoint('active'))
+    .done(function(active) {
+      if (active && active.id) attachTestRun(active);
+    });
+}
+
+function pollTestRun() {
+  if (!testRunState || testRunPollInFlight) return;
+  var runId = testRunState.id;
+  testRunPollInFlight = true;
+  $.get(testRunEndpoint(runId), {
+    stdoutOffset: testRunState.stdoutOffset,
+    stderrOffset: testRunState.stderrOffset,
+  })
+    .done(function(result) {
+      if (!testRunState || testRunState.id !== runId) return;
+      applyTestRunUpdate(result);
+      scheduleTestRunPoll(1000);
+    })
+    .fail(function(xhr) {
+      if (!testRunState || testRunState.id !== runId) return;
+      if (xhr.status === 404 || xhr.status === 400) {
+        rememberTestRunId(null);
+        testRunState = null;
+        var banner = document.getElementById('test-run-banner');
+        if (banner) banner.classList.add('d-none');
+        discoverActiveTestRun();
+        return;
+      }
+      testRunState.connectionLost = true;
+      testRunState.pollFailures += 1;
+      renderTestRun();
+      scheduleTestRunPoll(Math.min(5000, 1000 * Math.pow(2, testRunState.pollFailures)));
+    })
+    .always(function() {
+      testRunPollInFlight = false;
+    });
+}
+
+function initializeTestRuns() {
+  var id = trackedTestRunId();
+  if (id) {
+    attachTestRun({ id: id, status: 'running', startedAt: new Date().toISOString() });
+  } else {
+    discoverActiveTestRun();
+  }
+}
+
+function viewTestRunResult() {
+  if (!testRunState) return;
+  renderTestRun();
+  getModal('test-run-result-modal').show();
+}
+
+function stopCurrentTestRun() {
+  if (!testRunState || isTestRunTerminal(testRunState.status)) return;
+  $.ajax({ method: 'DELETE', url: testRunEndpoint(testRunState.id) })
+    .done(function(result) {
+      if (!testRunState || result.id !== testRunState.id) return;
+      testRunState.status = result.status;
+      testRunState.message = result.message || '';
+      renderTestRun();
+      scheduleTestRunPoll(100);
+    })
+    .fail(function(xhr) {
+      errorMessageBox((xhr.responseJSON && xhr.responseJSON.message) || xhr.statusText || 'request failed');
+    });
+}
+
+function dismissTestRun() {
+  if (!testRunState || !isTestRunTerminal(testRunState.status)) return;
+  rememberTestRunId(null);
+  var banner = document.getElementById('test-run-banner');
+  if (banner) banner.classList.add('d-none');
+  testRunState = null;
+}
+
 function testRunJob() {
   var payload = job_command_mode === 'code' && $('#job-code-content').val()
     ? codePayload()
@@ -310,7 +568,6 @@ function testRunJob() {
   var command = payload.commandMode === 'code' && payload.codeContent
     ? payload.codeContent
     : payload.command;
-  var envVars = $('#job-env-vars').val();
   if (!command || !command.trim()) {
     errorMessageBox(job_command_mode === 'code' ? 'Enter code before running' : 'Enter a command before running');
     return;
@@ -322,23 +579,24 @@ function testRunJob() {
   btn.setAttribute('disabled', 'disabled');
   btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status"></span> Running...';
   wrap.style.display = 'block';
-  status.textContent = '';
-  pre.textContent = '(running)';
-  $.post(routes.test_run, payload, function(result) {
-    var parts = [];
-    if (result.stdout) parts.push('--- stdout ---\n' + result.stdout);
-    if (result.stderr) parts.push('--- stderr ---\n' + result.stderr);
-    if (!parts.length) parts.push('(no output)');
-    pre.textContent = parts.join('\n\n');
-    var label = result.timedOut ? 'timed out' : ('exit code ' + result.exitCode);
-    status.textContent = '(' + label + ')';
-  }).fail(function(xhr) {
-    pre.textContent = (xhr.responseJSON && xhr.responseJSON.message) || xhr.statusText || 'request failed';
-    status.textContent = '(error)';
-  }).always(function() {
-    btn.removeAttribute('disabled');
-    btn.innerHTML = '<i class="bi bi-play-circle"></i> Test Run';
-  });
+  status.textContent = '(starting)';
+  pre.textContent = '(starting)';
+  $.post(routes.test_run, payload)
+    .done(function(result) {
+      jobTestRunId = result.id;
+      attachTestRun(result);
+    })
+    .fail(function(xhr) {
+      if (xhr.status === 409 && xhr.responseJSON && xhr.responseJSON.activeRun) {
+        jobTestRunId = xhr.responseJSON.activeRun.id;
+        attachTestRun(xhr.responseJSON.activeRun);
+        return;
+      }
+      pre.textContent = (xhr.responseJSON && xhr.responseJSON.message) || xhr.statusText || 'request failed';
+      status.textContent = '(error)';
+      btn.removeAttribute('disabled');
+      btn.innerHTML = '<i class="bi bi-play-circle"></i> Test Run';
+    });
 }
 
 function handleSaveFailure(xhr) {
@@ -481,6 +739,7 @@ function duplicateJob(_id) {
 }
 
 function resetTestResult() {
+  jobTestRunId = null;
   var wrap = document.getElementById('job-test-result-wrap');
   if (wrap) wrap.style.display = 'none';
   var pre = document.getElementById('job-test-result');

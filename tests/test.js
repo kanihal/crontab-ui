@@ -5,6 +5,7 @@ const request = require('supertest');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const createTestRunManager = require('../test-runs');
 
 const testDbPath = path.join(os.tmpdir(), `crontab-ui-test-${Date.now()}`);
 fs.mkdirSync(testDbPath, { recursive: true });
@@ -49,6 +50,33 @@ function codeEditPayload(job, overrides = {}) {
     envVars: job.envVars,
     ...overrides,
   };
+}
+
+async function collectTestRun(id, timeoutMs = 8000) {
+  const started = Date.now();
+  let stdoutOffset = 0;
+  let stderrOffset = 0;
+  let stdout = '';
+  let stderr = '';
+  let result;
+
+  while (Date.now() - started < timeoutMs) {
+    const response = await request(app)
+      .get(`/test_run/${id}`)
+      .query({ stdoutOffset, stderrOffset });
+    expect(response.status).toBe(200);
+    result = response.body;
+    stdout += result.stdout || '';
+    stderr += result.stderr || '';
+    stdoutOffset = result.nextStdoutOffset;
+    stderrOffset = result.nextStderrOffset;
+    if (['completed', 'failed', 'stopped', 'interrupted'].includes(result.status)) {
+      return { ...result, stdout, stderr };
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+
+  throw new Error(`Test run ${id} did not finish within ${timeoutMs}ms`);
 }
 
 describe('Crontab UI', () => {
@@ -357,6 +385,116 @@ describe('Crontab UI', () => {
     });
   });
 
+  describe('Asynchronous test runs', () => {
+    it('should return immediately, stream output, and preserve the real exit code', async () => {
+      const started = Date.now();
+      const response = await request(app)
+        .post('/test_run')
+        .send({ command: "printf 'first\\n'; sleep 0.2; printf 'second\\n'; printf 'warning\\n' >&2; exit 7" });
+
+      expect(response.status).toBe(202);
+      expect(Date.now() - started).toBeLessThan(150);
+      expect(response.body.status).toBe('running');
+      expect(response.body.id).toMatch(/^[0-9a-f-]{36}$/);
+
+      const active = await request(app).get('/test_run/active');
+      expect(active.status).toBe(200);
+      expect(active.body.id).toBe(response.body.id);
+
+      const result = await collectTestRun(response.body.id);
+      expect(result.status).toBe('completed');
+      expect(result.exitCode).toBe(7);
+      expect(result.stdout).toBe('first\nsecond\n');
+      expect(result.stderr).toBe('warning\n');
+    });
+
+    it('should enforce one active run and stop the full run on request', async () => {
+      const running = await request(app)
+        .post('/test_run')
+        .send({ command: "while :; do printf 'tick\\n'; sleep 1; done" });
+      expect(running.status).toBe(202);
+
+      const conflict = await request(app)
+        .post('/test_run')
+        .send({ command: 'echo should-not-run' });
+      expect(conflict.status).toBe(409);
+      expect(conflict.body.activeRun.id).toBe(running.body.id);
+
+      const stopping = await request(app).delete(`/test_run/${running.body.id}`);
+      expect(stopping.status).toBe(202);
+      expect(stopping.body.status).toBe('stopping');
+
+      const stopped = await collectTestRun(running.body.id);
+      expect(stopped.status).toBe('stopped');
+
+      const noActive = await request(app).get('/test_run/active');
+      expect(noActive.status).toBe(204);
+
+      const next = await request(app).post('/test_run').send({ command: 'echo next-run' });
+      expect(next.status).toBe(202);
+      const completed = await collectTestRun(next.body.id);
+      expect(completed.status).toBe('completed');
+      expect(completed.stdout).toBe('next-run\n');
+    });
+
+    it('should clean up temporary managed code after an asynchronous run', async () => {
+      const response = await request(app)
+        .post('/test_run')
+        .send({
+          commandMode: 'code',
+          codeFilename: 'test.sh',
+          codeContent: 'echo managed-test-run\n',
+          codeSource: 'paste',
+        });
+      expect(response.status).toBe(202);
+
+      const result = await collectTestRun(response.body.id);
+      expect(result.status).toBe('completed');
+      expect(result.stdout).toBe('managed-test-run\n');
+
+      const jobsFolder = path.join(testDbPath, 'code_uploads', 'jobs');
+      const temporaryJobs = fs.existsSync(jobsFolder)
+        ? fs.readdirSync(jobsFolder).filter((name) => name.startsWith('test-'))
+        : [];
+      expect(temporaryJobs).toEqual([]);
+    });
+
+    it('should cap retained output at 10 MiB and report truncation', async () => {
+      const bytes = 10 * 1024 * 1024 + 4096;
+      const response = await request(app)
+        .post('/test_run')
+        .send({ command: `node -e "process.stdout.write(Buffer.alloc(${bytes}, 120))"` });
+      expect(response.status).toBe(202);
+
+      const result = await collectTestRun(response.body.id, 20000);
+      expect(result.status).toBe('completed');
+      expect(result.stdoutTruncated).toBe(true);
+      expect(Buffer.byteLength(result.stdout)).toBe(10 * 1024 * 1024);
+      expect(result.stdoutBytes).toBe(10 * 1024 * 1024);
+    });
+
+    it('should validate run ids and output offsets', async () => {
+      const invalidId = await request(app).get('/test_run/not-a-run-id');
+      expect(invalidId.status).toBe(400);
+      expect(invalidId.body.message).toBe('Invalid test run id');
+
+      const response = await request(app).post('/test_run').send({ command: 'echo offsets' });
+      const invalidOffset = await request(app)
+        .get(`/test_run/${response.body.id}`)
+        .query({ stdoutOffset: -1 });
+      expect(invalidOffset.status).toBe(400);
+      await collectTestRun(response.body.id);
+    });
+
+    it('should render refresh-safe test-run controls on the main page', async () => {
+      const page = await request(app).get('/');
+      expect(page.status).toBe(200);
+      expect(page.text).toContain('id="test-run-banner"');
+      expect(page.text).toContain('id="test-run-result-modal"');
+      expect(page.text).toContain('initializeTestRuns();');
+    });
+  });
+
   describe('POST /stop and /start', () => {
     let jobId;
 
@@ -625,6 +763,7 @@ describe('Routes module', () => {
     expect(routes.root).toBe(base_url + '/');
     expect(routes.save).toBe(base_url + '/save');
     expect(routes.code_content).toBe(base_url + '/code_content');
+    expect(routes.test_run).toBe(base_url + '/test_run');
     expect(routes.backup).toBe(base_url + '/backup');
   });
 
@@ -632,6 +771,38 @@ describe('Routes module', () => {
     const { relative } = require('../routes');
     expect(relative.save).toBe('save');
     expect(relative.code_content).toBe('code_content');
+    expect(relative.test_run).toBe('test_run');
     expect(relative.backup).toBe('backup');
+  });
+});
+
+describe('Test run persistence', () => {
+  it('should mark an unfinished persisted run as interrupted after restart', async () => {
+    const folder = path.join(os.tmpdir(), `crontab-ui-run-restart-${Date.now()}`);
+    const id = '00000000-0000-4000-8000-000000000001';
+    fs.mkdirSync(folder, { recursive: true });
+    fs.writeFileSync(path.join(folder, `${id}.json`), JSON.stringify({
+      id,
+      status: 'running',
+      startedAt: new Date().toISOString(),
+      stdoutBytes: 0,
+      stderrBytes: 0,
+    }));
+    fs.writeFileSync(path.join(folder, `${id}.stdout`), 'partial output\n');
+    fs.writeFileSync(path.join(folder, `${id}.stderr`), '');
+
+    const manager = createTestRunManager({
+      folder,
+      prepare: (data) => ({ command: data.command }),
+    });
+    const result = await new Promise((resolve, reject) => {
+      manager.get(id, {}, (error, run) => error ? reject(error) : resolve(run));
+    });
+
+    expect(result.status).toBe('interrupted');
+    expect(result.message).toContain('server restarted');
+    expect(result.stdout).toBe('partial output\n');
+    expect(result.finishedAt).not.toBeNull();
+    fs.rmSync(folder, { recursive: true, force: true });
   });
 });
